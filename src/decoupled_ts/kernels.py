@@ -3,6 +3,9 @@ from __future__ import annotations
 import torch
 
 
+_KERNEL_CACHE: dict[tuple[str, str, int, str, float], tuple[torch.Tensor, torch.Tensor]] = {}
+
+
 def kernel_matrix(name: str, steps: int, scale: float, device: torch.device) -> torch.Tensor:
     """Build a zero-mean GP covariance matrix over window indices."""
     t = torch.arange(steps, device=device, dtype=torch.float32)
@@ -20,6 +23,20 @@ def kernel_matrix(name: str, steps: int, scale: float, device: torch.device) -> 
     return cov + 1e-4 * eye
 
 
+def precision_and_logdet(
+    name: str, steps: int, scale: float, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    key = (device.type, str(device.index), steps, name, float(scale))
+    cached = _KERNEL_CACHE.get(key)
+    if cached is not None:
+        return cached
+    k = kernel_matrix(name, steps, scale, device)
+    precision = torch.linalg.inv(k)
+    logdet = torch.linalg.slogdet(k).logabsdet
+    _KERNEL_CACHE[key] = (precision, logdet)
+    return precision, logdet
+
+
 def kl_mvn_diag_to_gp(
     mean: torch.Tensor,
     logvar: torch.Tensor,
@@ -33,9 +50,7 @@ def kl_mvn_diag_to_gp(
 
     total = mean.new_zeros(())
     for j in range(dims):
-        k = kernel_matrix(kernel_names[j], steps, kernel_scales[j], mean.device)
-        precision = torch.linalg.inv(k)
-        logdet_k = torch.linalg.slogdet(k).logabsdet
+        precision, logdet_k = precision_and_logdet(kernel_names[j], steps, kernel_scales[j], mean.device)
         var = logvar[:, :, j].exp()
         mu = mean[:, :, j]
         trace_term = torch.einsum("st,bt->b", precision, var)

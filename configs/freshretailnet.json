@@ -31,6 +31,8 @@
     "series_days": 90,
     "window_size": 24,
     "forecast_windows": 2,
+    "cache_dir": "data/freshretailnet/cache",
+    "use_cache": true,
     "max_train_series": null,
     "max_eval_series": null
   },
@@ -46,10 +48,15 @@
     "kernel_scales": [2.0, 1.0, 0.5, 0.25, 2.0, 1.0, 0.5, 0.25]
   },
   "train": {
-    "batch_size": 64,
+    "batch_size": 128,
     "epochs": 30,
     "lr": 0.001,
-    "num_workers": 0,
+    "num_workers": 2,
+    "pin_memory": true,
+    "persistent_workers": true,
+    "prefetch_factor": 2,
+    "amp": true,
+    "compile": false,
     "device": "auto",
     "output_dir": "runs/freshretailnet_glr"
   },

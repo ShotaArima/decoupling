@@ -39,6 +39,8 @@ You can also place `train.parquet` and `eval.parquet` under `data/freshretailnet
 
 For a quick smoke experiment, set `max_train_series` and `max_eval_series` in `configs/freshretailnet.json` to small values such as `256` and `64`.
 
+Preprocessed tensors are cached under `data/freshretailnet/cache` when `use_cache` is enabled, so the slow row-to-series conversion is skipped on later runs with the same config.
+
 ## Train
 
 ```bash
@@ -46,6 +48,8 @@ uv run decoupled-ts train --config configs/freshretailnet.json
 ```
 
 The best checkpoint is written to `runs/freshretailnet_glr/best.pt`.
+
+The training config uses `device: "auto"` to prefer CUDA, then Apple MPS, then CPU. CUDA runs use AMP and TF32 where available. Data loading uses worker processes and prefetching; tune `batch_size` and `num_workers` in `configs/freshretailnet.json` for your machine.
 
 ## Evaluate Paper-Style Experiments
 
@@ -60,4 +64,3 @@ This runs FreshRetailNet-adapted versions of the paper's three representation ev
 - multi-window forecasting using GP conditional local latent prediction
 
 Metrics are written to `runs/freshretailnet_glr/metrics.json`.
-# decoupling
