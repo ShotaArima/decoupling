@@ -55,8 +55,8 @@ def collect_representations(model: nn.Module, loader: DataLoader, device: torch.
         x = batch["x"].to(device, non_blocking=True)
         with autocast_context(device, amp_enabled):
             enc = model.encode(x)
-        zls.append(enc["zl_mean"].cpu())
-        zgs.append(enc["zg_mean"].cpu())
+        zls.append(enc["zl_mean"].float().cpu())
+        zgs.append(enc["zg_mean"].float().cpu())
         ys.append(batch["target"].float())
         groups.append(batch["subgroup"].long())
         xs.append(batch["x"])
@@ -73,8 +73,8 @@ def collect_representations(model: nn.Module, loader: DataLoader, device: torch.
 
 def train_downstream_regression(train_rep, eval_rep, config: dict, device: torch.device) -> dict[str, float]:
     LOGGER.info("Evaluation step 4/6: downstream prediction training start")
-    train_zl, train_zg, train_y = [v.to(device) for v in train_rep[:3]]
-    eval_zl, eval_zg, eval_y = [v.to(device) for v in eval_rep[:3]]
+    train_zl, train_zg, train_y = [v.float().to(device) for v in train_rep[:3]]
+    eval_zl, eval_zg, eval_y = [v.float().to(device) for v in eval_rep[:3]]
     model = RepresentationRegressor(
         local_dim=config["model"]["local_dim"],
         global_dim=config["model"]["global_dim"],
@@ -105,8 +105,8 @@ def train_downstream_regression(train_rep, eval_rep, config: dict, device: torch
 
 def train_subgroup_classifier(train_rep, eval_rep, config: dict, device: torch.device) -> dict[str, float]:
     LOGGER.info("Evaluation step 5/6: subgroup classifier training start")
-    train_zg = train_rep[1].to(device)
-    eval_zg = eval_rep[1].to(device)
+    train_zg = train_rep[1].float().to(device)
+    eval_zg = eval_rep[1].float().to(device)
     labels = torch.cat([train_rep[3], eval_rep[3]])
     classes = {int(v): i for i, v in enumerate(sorted(labels.unique().tolist()))}
     train_y = torch.tensor([classes[int(v)] for v in train_rep[3]], dtype=torch.long, device=device)
