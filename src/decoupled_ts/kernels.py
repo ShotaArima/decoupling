@@ -67,6 +67,7 @@ def gp_posterior_mean(
     kernel_scales: list[float],
 ) -> torch.Tensor:
     """Forecast future local latents using the GP conditional mean in the paper."""
+    observed_z = observed_z.float()
     batch, steps, dims = observed_z.shape
     device = observed_z.device
     all_steps = steps + forecast_steps

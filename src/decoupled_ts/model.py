@@ -182,6 +182,6 @@ class GLRModel(nn.Module):
     def forecast(self, x: torch.Tensor, forecast_windows: int) -> torch.Tensor:
         encoded = self.encode(x)
         future_z = gp_posterior_mean(
-            encoded["zl_mean"], forecast_windows, self.kernel_names, self.kernel_scales
+            encoded["zl_mean"].float(), forecast_windows, self.kernel_names, self.kernel_scales
         )
-        return self.decoder(future_z, encoded["zg_mean"])
+        return self.decoder(future_z, encoded["zg_mean"].float())
