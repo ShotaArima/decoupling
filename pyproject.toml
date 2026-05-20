@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "decoupled-ts"
+version = "0.1.0"
+description = "Decoupled local/global representation learning for FreshRetailNet-50K"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.2",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "pyarrow>=14.0",
+  "scikit-learn>=1.3",
+  "tqdm>=4.66",
+  "datasets>=2.18"
+]
+
+[project.scripts]
+decoupled-ts = "decoupled_ts.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

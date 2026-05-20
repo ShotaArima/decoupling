@@ -1,0 +1,62 @@
+{
+  "seed": 7,
+  "dataset": {
+    "name": "freshretailnet",
+    "hf_name": "Dingdong-Inc/FreshRetailNet-50K",
+    "data_dir": "data/freshretailnet",
+    "train_split": "train",
+    "eval_split": "eval",
+    "sample_id_columns": ["store_id", "product_id"],
+    "static_id_columns": [
+      "city_id",
+      "store_id",
+      "management_group_id",
+      "first_category_id",
+      "second_category_id",
+      "third_category_id",
+      "product_id"
+    ],
+    "daily_numeric_columns": [
+      "discount",
+      "holiday_flag",
+      "activity_flag",
+      "precpt",
+      "avg_temperature",
+      "avg_humidity",
+      "avg_wind_level"
+    ],
+    "hourly_sales_column": "hours_sale",
+    "hourly_stock_column": "hours_stock_status",
+    "stockout_value": 1,
+    "series_days": 90,
+    "window_size": 24,
+    "forecast_windows": 2,
+    "max_train_series": null,
+    "max_eval_series": null
+  },
+  "model": {
+    "input_dim": 13,
+    "global_dim": 8,
+    "local_dim": 8,
+    "hidden_dim": 128,
+    "decoder_std": 0.1,
+    "beta": 0.1,
+    "lambda_counterfactual": 0.5,
+    "kernel_names": ["rbf", "cauchy", "rbf", "cauchy", "rbf", "cauchy", "rbf", "cauchy"],
+    "kernel_scales": [2.0, 1.0, 0.5, 0.25, 2.0, 1.0, 0.5, 0.25]
+  },
+  "train": {
+    "batch_size": 64,
+    "epochs": 30,
+    "lr": 0.001,
+    "num_workers": 0,
+    "device": "auto",
+    "output_dir": "runs/freshretailnet_glr"
+  },
+  "evaluation": {
+    "downstream_target": "next_day_sale_amount",
+    "subgroup_target": "city_id",
+    "epochs": 10,
+    "lr": 0.001
+  }
+}
