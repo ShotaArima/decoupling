@@ -63,6 +63,7 @@
   "evaluation": {
     "downstream_target": "next_day_sale_amount",
     "subgroup_target": "city_id",
+    "batch_size": 128,
     "epochs": 10,
     "lr": 0.001
   }
