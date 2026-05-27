@@ -1,0 +1,80 @@
+{
+  "seed": 11,
+  "dataset": {
+    "name": "synthetic_retail",
+    "n_series": 800,
+    "days": 28,
+    "hours": 24,
+    "forecast_days": 2,
+    "valid_ratio": 0.15,
+    "test_ratio": 0.15,
+    "noise_std": 0.15,
+    "stockout_rate": 0.06
+  },
+  "model": {
+    "hidden_dim": 96,
+    "global_dim": 8,
+    "day_dim": 8,
+    "hour_dim": 8,
+    "interaction_dim": 6,
+    "dropout": 0.1
+  },
+  "loss": {
+    "reconstruction_weight": 0.05,
+    "history_sales_weight": 0.2,
+    "decouple_weight": 0.01
+  },
+  "train": {
+    "batch_size": 64,
+    "epochs": 8,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "huber_delta": 25.0,
+    "num_workers": 0,
+    "pin_memory": true,
+    "device": "auto",
+    "output_dir": "runs/retail_multigrain"
+  },
+  "experiments": [
+    {
+      "name": "baseline_flatten_mlp",
+      "type": "flatten_mlp"
+    },
+    {
+      "name": "global_only",
+      "type": "multigrain",
+      "use_day": false,
+      "use_hour": false,
+      "use_interaction": false
+    },
+    {
+      "name": "global_day",
+      "type": "multigrain",
+      "use_day": true,
+      "use_hour": false,
+      "use_interaction": false
+    },
+    {
+      "name": "global_hour",
+      "type": "multigrain",
+      "use_day": false,
+      "use_hour": true,
+      "use_interaction": false
+    },
+    {
+      "name": "global_day_hour",
+      "type": "multigrain",
+      "use_day": true,
+      "use_hour": true,
+      "use_interaction": false
+    },
+    {
+      "name": "global_day_hour_interaction",
+      "type": "multigrain",
+      "use_day": true,
+      "use_hour": true,
+      "use_interaction": true
+    }
+  ]
+}
