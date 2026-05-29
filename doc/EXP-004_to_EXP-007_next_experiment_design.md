@@ -239,6 +239,157 @@ probe_z_day_discount_mae
 
 `z_hour_heatmap.csv` は、行が hour、列が latent dimension です。時間帯ごとの潜在表現の平均パターンを見るために使います。
 
+## 実験結果
+
+### EXP-004: valid WAPE checkpoint smoke
+
+| model | best epoch | valid WAPE | test WAPE | MAE | RMSE | bias |
+|---|---:|---:|---:|---:|---:|---:|
+| `feature_flatten_mlp` | 5 | 0.6691 | 0.6364 | 35.7364 | 42.6594 | -0.6364 |
+| `proposed_with_decouple` | 5 | 0.6749 | 0.6057 | 34.0126 | 42.2566 | -0.6054 |
+
+所見:
+
+- `valid_wape` による checkpoint 選択は機能しています。
+- smoke では `proposed_with_decouple` が `feature_flatten_mlp` より test WAPE / MAE / RMSE で良いです。
+- ただし両方とも強い負の bias があり、smoke は性能評価ではなくコード確認として扱います。
+
+### EXP-005: 30 epoch synthetic
+
+| model | best epoch | valid WAPE | test WAPE | MAE | RMSE | bias |
+|---|---:|---:|---:|---:|---:|---:|
+| `naive_last_day` | - | - | 0.2760 | 31.4417 | 45.2243 | 0.2099 |
+| `naive_recent_mean` | - | - | 0.1479 | 16.8461 | 21.8661 | 0.0873 |
+| `naive_same_hour_recent_mean` | - | - | 0.1493 | 17.0031 | 22.2150 | 0.0914 |
+| `feature_flatten_mlp` | 11 | 0.1164 | 0.1042 | 11.8706 | 15.9041 | -0.0094 |
+| `global_only` | 28 | 0.1136 | **0.0979** | **11.1536** | 15.3251 | -0.0105 |
+| `global_day` | 29 | 0.1132 | 0.0996 | 11.3436 | 15.6763 | -0.0199 |
+| `global_hour` | 17 | 0.1136 | 0.0998 | 11.3690 | 15.4872 | 0.0005 |
+| `proposed_no_decouple` | 12 | 0.1169 | 0.1006 | 11.4550 | 15.3523 | -0.0026 |
+| `proposed_with_decouple` | 21 | 0.1139 | 0.0994 | 11.3211 | 15.6162 | -0.0178 |
+| `proposed_interaction` | 13 | 0.1175 | 0.1024 | 11.6662 | **15.3131** | 0.0067 |
+
+所見:
+
+- synthetic では学習モデル群が naive baseline を明確に上回りました。
+- 最良 WAPE / MAE は `global_only` です。
+- `proposed_with_decouple` は `feature_flatten_mlp` より良いですが、`global_only` には届いていません。
+- `z_day` probe は一部モデルで weekday / holiday を強く捉えていますが、提案モデルが最良ではありません。
+- この synthetic 設定では、day/hour 分離の有効性よりも global 表現の強さが目立ちます。
+
+### EXP-005: 30 epoch FreshRetailNet
+
+| model | best epoch | valid WAPE | test WAPE | MAE | RMSE | bias |
+|---|---:|---:|---:|---:|---:|---:|
+| `naive_last_day` | - | - | 0.3622 | 0.8629 | 1.4713 | 0.0804 |
+| `naive_recent_mean` | - | - | 0.5084 | 1.2112 | 2.2258 | 0.4704 |
+| `naive_same_hour_recent_mean` | - | - | **0.3405** | **0.8112** | **1.3154** | 0.2714 |
+| `feature_flatten_mlp` | 8 | 0.6161 | 0.6161 | 1.4679 | 4.2142 | -0.2751 |
+| `global_only` | 1 | 0.6220 | 0.6220 | 1.4818 | 4.3348 | -0.3758 |
+| `global_day` | 5 | 0.6161 | 0.6161 | 1.4679 | 4.3257 | -0.3686 |
+| `global_hour` | 2 | 0.6747 | 0.6747 | 1.6075 | 4.4868 | -0.6154 |
+| `proposed_no_decouple` | 2 | 0.6166 | 0.6166 | 1.4691 | 4.3291 | -0.3654 |
+| `proposed_with_decouple` | 3 | 0.6176 | 0.6176 | 1.4714 | 4.3521 | -0.4147 |
+| `proposed_interaction` | 7 | 0.6181 | 0.6181 | 1.4727 | 4.3496 | -0.4195 |
+
+所見:
+
+- FreshRetailNet では `naive_same_hour_recent_mean` が最良です。
+- 学習モデル群は naive baseline に大きく負けています。
+- 学習モデルは全体的に負の bias が大きく、過小予測に寄っています。
+- この結果から、FreshRetailNet では現状の提案モデルを「予測性能で有利」と主張するのは難しいです。
+- 次の改善対象は、future day の既知特徴利用、target scale の扱い、店舗×カテゴリ集約、または予測 head の再設計です。
+
+### EXP-006: baseline comparability synthetic
+
+| model | best epoch | valid WAPE | test WAPE | MAE | RMSE | bias |
+|---|---:|---:|---:|---:|---:|---:|
+| `naive_recent_mean` | - | - | 0.1452 | 19.6095 | 29.1819 | 0.0732 |
+| `naive_same_hour_recent_mean` | - | - | 0.1477 | 19.9495 | 29.6868 | 0.0772 |
+| `feature_flatten_mlp` | 8 | 0.1037 | **0.1027** | **13.8713** | **25.6710** | -0.0153 |
+| `proposed_with_decouple` | 17 | **0.1008** | 0.1030 | 13.9091 | 25.8636 | -0.0199 |
+
+所見:
+
+- synthetic では learned model が naive baseline を上回っています。
+- `feature_flatten_mlp` と `proposed_with_decouple` はほぼ同等です。
+- valid WAPE は proposed が良い一方、test WAPE は feature MLP がわずかに良いです。
+- 予測性能だけでは、提案モデルの優位性は弱いです。probe / heatmap による解釈性評価が必要です。
+
+### EXP-006: baseline comparability FreshRetailNet
+
+| model | best epoch | valid WAPE | test WAPE | MAE | RMSE | bias |
+|---|---:|---:|---:|---:|---:|---:|
+| `naive_recent_mean` | - | - | 0.5084 | 1.2112 | 2.2258 | 0.4704 |
+| `naive_same_hour_recent_mean` | - | - | **0.3405** | **0.8112** | **1.3154** | 0.2714 |
+| `feature_flatten_mlp` | 16 | 0.5664 | 0.5664 | 1.3493 | 3.7134 | -0.3507 |
+| `proposed_with_decouple` | 3 | 0.6167 | 0.6167 | 1.4692 | 4.3314 | -0.3748 |
+
+所見:
+
+- FreshRetailNet では `naive_same_hour_recent_mean` が明確に最良です。
+- proposed は feature MLP よりも悪く、naive baseline には大きく負けています。
+- 予測性能で提案モデルを主張するには、現状の FreshRetailNet 設定では不十分です。
+- まずは「hourly recent mean が強すぎる理由」を分析する必要があります。
+
+### EXP-007: stockout / probe / heatmap synthetic
+
+| model | best epoch | valid WAPE | test WAPE | MAE | RMSE | bias | z_global subgroup | z_day weekday | z_day holiday |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `proposed_stockout_mask` | 18 | 0.1006 | **0.0930** | **10.4837** | **14.9435** | 0.0100 | 0.5333 | 0.5804 | 0.7952 |
+| `proposed_stockout_soft_0_1` | 24 | 0.0998 | 0.0931 | 10.4938 | 15.2102 | 0.0130 | 0.5083 | 0.5387 | 0.8286 |
+| `proposed_stockout_uniform` | 20 | **0.0993** | 0.0934 | 10.5249 | 15.4440 | 0.0069 | 0.5167 | **0.7149** | **0.8830** |
+
+所見:
+
+- synthetic では3方式とも予測性能は非常に近いです。
+- test WAPE / MAE / RMSE は `mask` が最良です。
+- probe では `uniform` が weekday / holiday を最も強く捉えています。
+- 欠品中の観測を完全に無視する方が予測性能はやや良く、欠品中も入れる方が calendar probe は強くなる傾向があります。
+
+### EXP-007: stockout / probe / heatmap FreshRetailNet
+
+| model | best epoch | valid WAPE | test WAPE | MAE | RMSE | bias | z_global subgroup | z_day weekday | z_day holiday |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `proposed_stockout_mask` | 2 | 0.6179 | 0.6179 | 1.4721 | 4.3482 | -0.4008 | 0.0000 | 0.1942 | **0.6577** |
+| `proposed_stockout_soft_0_1` | 2 | 0.6188 | 0.6188 | 1.4742 | 4.3107 | -0.3246 | 0.0000 | **0.2031** | 0.5499 |
+| `proposed_stockout_uniform` | 27 | **0.5588** | **0.5588** | **1.3312** | **3.4663** | -0.2955 | 0.2620 | 0.1973 | 0.4504 |
+
+所見:
+
+- FreshRetailNet では `uniform` が最良です。
+- `uniform` は予測性能と bias の両方を改善しています。
+- ただし naive baseline の `same_hour_recent_mean` にはまだ負けています。
+- `probe_z_global_subgroup_accuracy` は majority accuracy 0.582 を下回っており、global latent が subgroup を十分に捉えているとは言えません。
+- FreshRetailNet では probe の label overlap が train 9 classes / test 3 classes / overlap 3 classes で、評価が不安定です。
+
+## 総合所見
+
+1. `valid_wape` checkpoint と early stopping は機能しています。
+2. synthetic では learned model が naive baseline を上回ります。
+3. FreshRetailNet では naive_same_hour_recent_mean が非常に強く、現状の learned model は予測性能で負けています。
+4. `proposed_with_decouple` は feature MLP と同等程度で、予測性能だけでは強い優位性を示せていません。
+5. 欠品重みは synthetic では差が小さく、FreshRetailNet では `uniform` が最良でした。
+6. probe は synthetic では一定の意味を持ちますが、FreshRetailNet では class imbalance / label overlap の問題が残ります。
+
+## 次の判断
+
+現時点で研究主張を組むなら、以下が妥当です。
+
+```text
+多粒度 local/global 分離は synthetic では naive baseline より有効であり、一部 probe でも日付要因を捉える。
+一方、FreshRetailNet では強い same-hour recent mean baseline に対して予測性能で劣る。
+したがって、現状の主張は予測性能優位ではなく、表現分解の可能性と、実データでの課題分析に置くべきである。
+```
+
+次に必要なのは以下です。
+
+1. FreshRetailNet の `same_hour_recent_mean` が強い理由を、需要帯・欠品率・ゼロ率別に分析する。
+2. 店舗×商品ではなく店舗×カテゴリ集約で再実験する。
+3. proposed model に same-hour recent mean を residual baseline として組み込む。
+4. 予測対象を「総売上」だけでなく「naive baseline からの残差」に変える。
+5. probe 評価は subgroup ではなく、weekday / holiday / discount / hour pattern を中心に再設計する。
+
 ## 実行順序の推奨
 
 まず smoke でコード確認します。
