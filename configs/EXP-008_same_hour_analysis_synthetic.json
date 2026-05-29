@@ -1,0 +1,31 @@
+{
+  "seed": 31,
+  "dataset": {
+    "name": "synthetic_retail",
+    "n_series": 800,
+    "days": 28,
+    "hours": 24,
+    "forecast_days": 2,
+    "recent_days": 7,
+    "valid_ratio": 0.15,
+    "test_ratio": 0.15,
+    "noise_std": 0.15,
+    "stockout_rate": 0.06
+  },
+  "analysis": {
+    "batch_size": 256,
+    "quantile_bins": 5,
+    "output_dir": "runs/EXP-008_same_hour_analysis_synthetic",
+    "ignore_missing_prediction_sources": true,
+    "prediction_sources": [
+      {
+        "name": "feature_flatten_mlp",
+        "path": "runs/EXP-006_baseline_comparability_synthetic/feature_flatten_mlp/predictions.csv"
+      },
+      {
+        "name": "proposed_with_decouple",
+        "path": "runs/EXP-006_baseline_comparability_synthetic/proposed_with_decouple/predictions.csv"
+      }
+    ]
+  }
+}
