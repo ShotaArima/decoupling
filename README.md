@@ -109,3 +109,15 @@ Outputs are collected under `train.output_dir`:
 - per-variant `history.jsonl`: epoch losses
 - per-variant `metrics.json`: test metrics
 - per-variant `z_global.npy`, `z_day.npy`, `z_hour.npy`: latent arrays for probes and visualization
+
+## Residual Diagnostics
+
+To validate the residual-centered hypothesis before training representation models, run:
+
+```bash
+uv run decoupled-ts residual-diagnostics --config configs/2-Exp-1_residual_diagnostics_smoke.json
+uv run decoupled-ts residual-diagnostics --config configs/2-Exp-1_residual_diagnostics_synthetic.json
+uv run decoupled-ts residual-diagnostics --config configs/2-Exp-1_residual_diagnostics_freshretailnet.json
+```
+
+This compares baseline components such as recent same-hour means, then analyzes structure in `r = y - b` by hour, weekday, and subgroup. Outputs are written under `analysis.output_dir`, including `baseline_metrics.json`, `summary.json`, and residual CSV heatmaps.

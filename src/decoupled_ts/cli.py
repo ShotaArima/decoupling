@@ -14,6 +14,8 @@ def main() -> None:
     evaluate.add_argument("--checkpoint", default="runs/freshretailnet_glr/best.pt")
     retail = sub.add_parser("retail-experiment")
     retail.add_argument("--config", default="configs/retail_multigrain.json")
+    residual = sub.add_parser("residual-diagnostics")
+    residual.add_argument("--config", default="configs/2-Exp-1_residual_diagnostics_smoke.json")
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -33,6 +35,10 @@ def main() -> None:
         from .retail_experiments import run_retail_experiments
 
         print(json.dumps(run_retail_experiments(args.config), indent=2))
+    elif args.cmd == "residual-diagnostics":
+        from .residual_diagnostics import run_residual_diagnostics
+
+        print(json.dumps(run_residual_diagnostics(args.config), indent=2))
 
 
 if __name__ == "__main__":
