@@ -327,6 +327,34 @@ runs/EXP-010_residual_baseline_freshretailnet/summary.csv
 runs/EXP-010_residual_baseline_freshretailnet/*/predictions.csv
 ```
 
+### 実験結果: EXP-010 Synthetic
+
+| model | best epoch | valid WAPE | test WAPE | MAE | RMSE | bias | z_global subgroup | z_day weekday | z_day holiday |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `naive_same_hour_recent_mean` | - | - | 0.1425 | 20.0036 | 25.5097 | 0.0887 | - | - | - |
+| `proposed_residual_additive` | 23 | 0.1062 | **0.0981** | **13.7758** | 21.3453 | -0.0107 | **0.6333** | **0.6690** | **0.8563** |
+| `proposed_residual_additive_interaction` | 27 | **0.1044** | 0.0996 | 13.9800 | **21.0988** | -0.0068 | 0.5667 | 0.6152 | 0.8342 |
+
+Synthetic では residual baseline 化により、naive baseline を明確に上回りました。`interaction` なしの residual additive が test WAPE / MAE で最良です。
+
+### 実験結果: EXP-010 FreshRetailNet
+
+| model | best epoch | valid WAPE | test WAPE | MAE | RMSE | bias |
+|---|---:|---:|---:|---:|---:|---:|
+| `naive_same_hour_recent_mean` | - | - | **0.3405** | **0.8112** | **1.3154** | 0.2714 |
+| `proposed_residual_additive` | 1 | 1.0000 | 1.0000 | 2.3824 | 4.8676 | -1.0000 |
+| `proposed_residual_additive_interaction` | 1 | 1.0000 | 1.0000 | 2.3824 | 4.8676 | -1.0000 |
+
+FreshRetailNet の EXP-010 は失敗です。`WAPE=1.0` かつ `bias=-1.0` は、最終予測がほぼ全ゼロになっていることを示します。
+
+原因候補:
+
+- `residual_additive` で `baseline + residual` が負になり、`nonnegative` clamp により 0 に潰れている。
+- residual の初期出力スケールが FreshRetailNet の baseline より大きく負に振れている。
+- `residual_additive` では教師信号が総売上のままなので、residual の学習として不安定。
+
+この結果から、FreshRetailNet では EXP-010 より EXP-011 の residual target 化を優先します。
+
 ## EXP-011: 予測対象を naive baseline からの残差に変える
 
 ### 問い
@@ -406,6 +434,44 @@ runs/EXP-011_residual_target_synthetic/*/predictions.csv
 runs/EXP-011_residual_target_freshretailnet/summary.csv
 runs/EXP-011_residual_target_freshretailnet/*/predictions.csv
 ```
+
+### 実験結果: EXP-011 Synthetic
+
+| model | best epoch | valid WAPE | test WAPE | MAE | RMSE | bias | z_global subgroup | z_day weekday | z_day holiday |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `naive_same_hour_recent_mean` | - | - | 0.1293 | 15.2104 | 19.7457 | 0.0787 | - | - | - |
+| `proposed_residual_target` | 10 | **0.0986** | **0.1093** | **12.8632** | **16.2344** | -0.0128 | **0.6250** | 0.6292 | **0.9003** |
+| `proposed_residual_target_interaction` | 6 | 0.1014 | 0.1123 | 13.2161 | 16.4306 | -0.0177 | 0.5167 | **0.7378** | 0.8720 |
+
+Synthetic では residual target 化も naive baseline を上回りました。`interaction` なしが test WAPE / MAE / RMSE で最良です。
+
+### 実験結果: EXP-011 FreshRetailNet
+
+| model | best epoch | valid WAPE | test WAPE | MAE | RMSE | bias | z_day holiday |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `naive_same_hour_recent_mean` | - | - | 0.3405 | 0.8112 | 1.3154 | 0.2714 | - |
+| `proposed_residual_target` | 2 | 0.3214 | 0.3214 | 0.7658 | 1.2252 | 0.1034 | 0.4783 |
+| `proposed_residual_target_interaction` | 7 | **0.3032** | **0.3032** | **0.7224** | **1.1834** | **0.0975** | **0.5216** |
+
+FreshRetailNet では residual target 化が有効でした。`proposed_residual_target_interaction` は `naive_same_hour_recent_mean` を WAPE で約 10.9% 改善しています。
+
+改善率:
+
+```text
+naive_same_hour_recent_mean WAPE = 0.3405
+proposed_residual_target_interaction WAPE = 0.3032
+relative improvement = 約 10.9%
+```
+
+また、bias も `0.2714` から `0.0975` へ改善しています。これは、same-hour baseline の過大予測を residual model が補正できていることを示します。
+
+### EXP-010/011 の結論
+
+1. Synthetic では EXP-010 / EXP-011 の両方が naive baseline を上回りました。
+2. FreshRetailNet では EXP-010 residual additive は失敗し、全ゼロ予測相当になりました。
+3. FreshRetailNet では EXP-011 residual target が有効で、naive baseline を明確に改善しました。
+4. 今後の主実験候補は `proposed_residual_target_interaction` です。
+5. 研究主張は「総需要を直接予測する」のではなく、「強い same-hour baseline の残差を multi-grain latent で補正する」方向に修正するのが妥当です。
 
 ## EXP-012: probe の再設計
 
