@@ -64,3 +64,48 @@ This runs FreshRetailNet-adapted versions of the paper's three representation ev
 - multi-window forecasting using GP conditional local latent prediction
 
 Metrics are written to `runs/freshretailnet_glr/metrics.json`.
+
+## Retail Multi-Grain Experiments
+
+The retail-specific extension keeps the original static/dynamic idea, but splits the local representation into day-level and hour-level factors:
+
+- `z_global`: store-product or store-category baseline demand.
+- `z_day`: date-level movement such as weekday, holiday, weather, promotion, or event effects.
+- `z_hour`: repeated intra-day demand shape such as morning, lunch, evening, or late-night peaks.
+- `z_interaction`: optional day x hour interaction such as promotion-day lunch peaks.
+
+Run a quick smoke test:
+
+```bash
+uv run decoupled-ts retail-experiment --config configs/retail_multigrain_smoke.json
+```
+
+Run the full synthetic ablation suite:
+
+```bash
+uv run decoupled-ts retail-experiment --config configs/retail_multigrain.json
+```
+
+Run on FreshRetailNet after preparing local parquet files:
+
+```bash
+uv run decoupled-ts retail-experiment --config configs/retail_multigrain_freshretailnet.json
+```
+
+The runner trains these variants from the config:
+
+- `baseline_flatten_mlp`
+- `global_only`
+- `global_day`
+- `global_hour`
+- `global_day_hour`
+- `global_day_hour_interaction`
+
+Outputs are collected under `train.output_dir`:
+
+- root `run.log`: overall experiment log
+- root `summary.json` and `summary.csv`: final WAPE/MAE/RMSE/Bias comparison
+- per-variant `run.log`: training log
+- per-variant `history.jsonl`: epoch losses
+- per-variant `metrics.json`: test metrics
+- per-variant `z_global.npy`, `z_day.npy`, `z_hour.npy`: latent arrays for probes and visualization
