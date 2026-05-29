@@ -10,7 +10,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
 from sklearn.metrics import accuracy_score
 
 from .data import load_config
@@ -67,8 +67,10 @@ def loss_for_batch(model: nn.Module, batch: dict[str, torch.Tensor], out: dict[s
     if "reconstruction" in out:
         grid = flatten_to_grid(batch["x"])
         mask = flatten_to_grid(batch["mask"])
-        recon_loss = ((out["reconstruction"] - grid).abs() * mask).sum() / mask.sum().clamp_min(1.0)
-        sales_loss = ((out["sales_grid"] - grid[..., 0]).abs() * mask[..., 0]).sum() / mask[..., 0].sum().clamp_min(1.0)
+        weights = reconstruction_weights(mask, config)
+        recon_loss = ((out["reconstruction"] - grid).abs() * weights).sum() / weights.sum().clamp_min(1.0)
+        sales_weights = weights[..., 0]
+        sales_loss = ((out["sales_grid"] - grid[..., 0]).abs() * sales_weights).sum() / sales_weights.sum().clamp_min(1.0)
         decouple = covariance_penalty([out["z_global"], out["z_day"], out["z_hour"]])
         total = (
             total
@@ -85,6 +87,19 @@ def loss_for_batch(model: nn.Module, batch: dict[str, torch.Tensor], out: dict[s
         )
     values["loss"] = total
     return values
+
+
+def reconstruction_weights(mask: torch.Tensor, config: dict) -> torch.Tensor:
+    """Weight censored stockout sales in reconstruction-style auxiliary losses."""
+    mode = str(config.get("loss", {}).get("stockout_weighting", "mask"))
+    if mode == "mask":
+        return mask
+    if mode == "uniform":
+        return torch.ones_like(mask)
+    if mode == "soft":
+        stockout_weight = float(config.get("loss", {}).get("stockout_weight", 0.1))
+        return torch.where(mask > 0.0, torch.ones_like(mask), torch.full_like(mask, stockout_weight))
+    raise ValueError(f"unknown stockout_weighting mode: {mode}")
 
 
 def run_epoch(
@@ -135,6 +150,12 @@ def predict_model(model: nn.Module, loader: DataLoader, forecast_days: int, devi
 def evaluate_model(model: nn.Module, loader: DataLoader, forecast_days: int, device: torch.device) -> dict[str, float]:
     y_true, y_pred = predict_model(model, loader, forecast_days, device)
     return regression_metrics(y_true, y_pred)
+
+
+@torch.no_grad()
+def validation_prediction_metrics(model: nn.Module, loader: DataLoader, forecast_days: int, device: torch.device) -> dict[str, float]:
+    y_true, y_pred = predict_model(model, loader, forecast_days, device)
+    return {f"valid_{key}": value for key, value in regression_metrics(y_true, y_pred).items()}
 
 
 def _observed_sales_grid(batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
@@ -193,18 +214,58 @@ def write_predictions_csv(path: Path, y_true: np.ndarray, y_pred: np.ndarray) ->
 
 
 @torch.no_grad()
-def collect_latent_arrays(model: nn.Module, loader: DataLoader, device: torch.device) -> dict[str, np.ndarray]:
+def collect_latent_arrays(model: nn.Module, loader: DataLoader, device: torch.device, config: dict | None = None) -> dict[str, np.ndarray]:
     if not hasattr(model, "encode"):
         return {}
     model.eval()
     parts: dict[str, list[np.ndarray]] = {"z_global": [], "z_day": [], "z_hour": []}
     labels = []
+    day_weekday = []
+    day_holiday = []
+    day_discount = []
     for batch in tqdm(loader, desc="latents", unit="batch"):
-        enc = model.encode(batch["x"].to(device), batch["mask"].to(device))
+        x = batch["x"].to(device)
+        enc = model.encode(x, batch["mask"].to(device))
         for key in parts:
             parts[key].append(enc[key].detach().cpu().numpy())
         labels.append(batch["subgroup"].numpy())
-    return {key: np.concatenate(values, axis=0) for key, values in parts.items()} | {"subgroup": np.concatenate(labels, axis=0)}
+        if config is not None:
+            label_dict = extract_day_probe_labels(x.detach().cpu(), config)
+            day_weekday.append(label_dict["weekday"])
+            day_holiday.append(label_dict["holiday"])
+            day_discount.append(label_dict["discount"])
+    arrays = {key: np.concatenate(values, axis=0) for key, values in parts.items()} | {"subgroup": np.concatenate(labels, axis=0)}
+    if day_weekday:
+        arrays["day_weekday"] = np.concatenate(day_weekday, axis=0)
+        arrays["day_holiday"] = np.concatenate(day_holiday, axis=0)
+        arrays["day_discount"] = np.concatenate(day_discount, axis=0)
+    return arrays
+
+
+def extract_day_probe_labels(x: torch.Tensor, config: dict) -> dict[str, np.ndarray]:
+    grid = flatten_to_grid(x)
+    data_cfg = config["dataset"]
+    if data_cfg["name"] == "synthetic_retail":
+        discount_idx = 2
+        holiday_idx = 3
+        dow_sin_idx = 7
+        dow_cos_idx = 8
+    else:
+        numeric_cols = list(data_cfg["daily_numeric_columns"])
+        discount_idx = 2 + numeric_cols.index("discount") if "discount" in numeric_cols else None
+        holiday_idx = 2 + numeric_cols.index("holiday_flag") if "holiday_flag" in numeric_cols else None
+        dow_sin_idx = 2 + len(numeric_cols) + 2
+        dow_cos_idx = 2 + len(numeric_cols) + 3
+    day_grid = grid[:, :, 0, :]
+    dow_angle = torch.atan2(day_grid[..., dow_sin_idx], day_grid[..., dow_cos_idx])
+    weekday = torch.round((dow_angle.remainder(2 * torch.pi)) / (2 * torch.pi) * 7).long().remainder(7)
+    holiday = torch.zeros_like(weekday) if holiday_idx is None else (day_grid[..., holiday_idx] > 0.5).long()
+    discount = torch.zeros_like(day_grid[..., 0]) if discount_idx is None else day_grid[..., discount_idx].float()
+    return {
+        "weekday": weekday.numpy(),
+        "holiday": holiday.numpy(),
+        "discount": discount.numpy(),
+    }
 
 
 def save_latent_arrays(latents: dict[str, np.ndarray], out_dir: Path) -> None:
@@ -234,7 +295,57 @@ def run_representation_probes(train_latents: dict[str, np.ndarray], test_latents
     clf.fit(train_zg, train_latents["subgroup"])
     pred = clf.predict(test_zg)
     metrics["probe_z_global_subgroup_accuracy"] = float(accuracy_score(test_latents["subgroup"], pred))
+    metrics.update(run_day_probes(train_latents, test_latents))
     return metrics
+
+
+def run_day_probes(train_latents: dict[str, np.ndarray], test_latents: dict[str, np.ndarray]) -> dict[str, float]:
+    needed = {"z_day", "day_weekday", "day_holiday", "day_discount"}
+    if not needed.issubset(train_latents) or not needed.issubset(test_latents):
+        return {}
+    train_z = train_latents["z_day"].reshape(-1, train_latents["z_day"].shape[-1])
+    test_z = test_latents["z_day"].reshape(-1, test_latents["z_day"].shape[-1])
+    train_weekday = train_latents["day_weekday"].reshape(-1)
+    test_weekday = test_latents["day_weekday"].reshape(-1)
+    train_holiday = train_latents["day_holiday"].reshape(-1)
+    test_holiday = test_latents["day_holiday"].reshape(-1)
+    train_discount = train_latents["day_discount"].reshape(-1)
+    test_discount = test_latents["day_discount"].reshape(-1)
+    metrics: dict[str, float] = {}
+    if len(np.unique(train_weekday)) > 1:
+        weekday_clf = LogisticRegression(max_iter=1000, class_weight="balanced")
+        weekday_clf.fit(train_z, train_weekday)
+        metrics["probe_z_day_weekday_accuracy"] = float(accuracy_score(test_weekday, weekday_clf.predict(test_z)))
+    if len(np.unique(train_holiday)) > 1:
+        holiday_clf = LogisticRegression(max_iter=1000, class_weight="balanced")
+        holiday_clf.fit(train_z, train_holiday)
+        metrics["probe_z_day_holiday_accuracy"] = float(accuracy_score(test_holiday, holiday_clf.predict(test_z)))
+    if float(np.std(train_discount)) > 1e-6:
+        reg = Ridge(alpha=1.0)
+        reg.fit(train_z, train_discount)
+        pred = reg.predict(test_z)
+        metrics["probe_z_day_discount_mae"] = float(np.mean(np.abs(pred - test_discount)))
+    return metrics
+
+
+def save_latent_diagnostics(latents: dict[str, np.ndarray], out_dir: Path) -> None:
+    if "z_hour" in latents:
+        z_hour = latents["z_hour"]
+        with (out_dir / "z_hour_heatmap.csv").open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["hour", *[f"dim_{idx}" for idx in range(z_hour.shape[-1])]])
+            mean_by_hour = z_hour.mean(axis=0)
+            for hour, row in enumerate(mean_by_hour):
+                writer.writerow([hour, *[float(v) for v in row]])
+    if {"z_day", "day_weekday", "day_holiday", "day_discount"}.issubset(latents):
+        z_day = latents["z_day"]
+        day_summary = {
+            "z_day_mean_norm": float(np.linalg.norm(z_day.mean(axis=(0, 1)))),
+            "weekday_classes": float(len(np.unique(latents["day_weekday"]))),
+            "holiday_rate": float(np.mean(latents["day_holiday"])),
+            "discount_mean": float(np.mean(latents["day_discount"])),
+        }
+        write_json(out_dir / "latent_diagnostics.json", day_summary)
 
 
 def audit_dataset(bundle, out_dir: Path) -> dict[str, float]:
@@ -318,20 +429,40 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     best = float("inf")
     best_path = out_dir / "best.pt"
     selection_metric = str(config["train"].get("selection_metric", "valid_loss"))
+    patience = int(config["train"].get("early_stopping_patience", 0))
+    min_delta = float(config["train"].get("early_stopping_min_delta", 0.0))
+    epochs_without_improvement = 0
+    best_epoch = 0
     for epoch in range(1, int(train_cfg["epochs"]) + 1):
         train_losses = run_epoch(model, train_loader, variant_config, device, optimizer, f"{name} train {epoch}")
         with torch.inference_mode():
             valid_losses = run_epoch(model, valid_loader, variant_config, device, None, f"{name} valid {epoch}")
+            valid_pred_metrics = validation_prediction_metrics(model, valid_loader, bundle.forecast_days, device)
         row = {"epoch": epoch, **{f"train_{k}": v for k, v in train_losses.items()}, **{f"valid_{k}": v for k, v in valid_losses.items()}}
+        row.update(valid_pred_metrics)
         append_jsonl(out_dir / "history.jsonl", row)
         logger.info("Epoch %d complete: %s", epoch, row)
         score = row.get(selection_metric)
         if score is None:
             raise KeyError(f"selection_metric={selection_metric!r} is not available in epoch row keys={sorted(row)}")
-        if float(score) < best:
+        if float(score) < best - min_delta:
             best = float(score)
+            best_epoch = epoch
+            epochs_without_improvement = 0
             torch.save({"model": model.state_dict(), "config": variant_config, "variant": variant}, best_path)
             logger.info("Saved best checkpoint: %s=%.5f path=%s", selection_metric, best, best_path)
+        else:
+            epochs_without_improvement += 1
+            if patience > 0 and epochs_without_improvement >= patience:
+                logger.info(
+                    "Early stopping at epoch=%d best_epoch=%d best_%s=%.5f patience=%d",
+                    epoch,
+                    best_epoch,
+                    selection_metric,
+                    best,
+                    patience,
+                )
+                break
 
     checkpoint = torch.load(best_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"])
@@ -339,14 +470,15 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     write_predictions_csv(out_dir / "predictions.csv", y_true, y_pred)
     metrics = regression_metrics(y_true, y_pred)
     if hasattr(model, "encode"):
-        train_latents = collect_latent_arrays(model, train_loader, device)
-        test_latents = collect_latent_arrays(model, test_loader, device)
+        train_latents = collect_latent_arrays(model, train_loader, device, variant_config)
+        test_latents = collect_latent_arrays(model, test_loader, device, variant_config)
         save_latent_arrays(test_latents, out_dir)
+        save_latent_diagnostics(test_latents, out_dir)
         probe_metrics = run_representation_probes(train_latents, test_latents)
         metrics.update(probe_metrics)
     write_json(out_dir / "metrics.json", metrics)
     logger.info("Variant complete: metrics=%s", metrics)
-    return {"name": name, "best_valid_loss": best, **metrics}
+    return {"name": name, "best_validation_score": best, "best_epoch": best_epoch, "selection_metric": selection_metric, **metrics}
 
 
 def run_retail_experiments(config_path: str) -> dict[str, Any]:
