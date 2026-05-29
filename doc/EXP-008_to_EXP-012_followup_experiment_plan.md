@@ -75,11 +75,31 @@ target quantile
 
 ```text
 runs/EXP-008_same_hour_analysis/summary.csv
+runs/EXP-008_same_hour_analysis/summary.json
+runs/EXP-008_same_hour_analysis/all_predictions_with_features.csv
 runs/EXP-008_same_hour_analysis/error_by_target_quantile.csv
 runs/EXP-008_same_hour_analysis/error_by_zero_rate.csv
 runs/EXP-008_same_hour_analysis/error_by_stockout_rate.csv
+runs/EXP-008_same_hour_analysis/error_by_store_id.csv
+runs/EXP-008_same_hour_analysis/error_by_second_category_id.csv
+runs/EXP-008_same_hour_analysis/error_by_third_category_id.csv
 runs/EXP-008_same_hour_analysis/model_pairwise_comparison.csv
+runs/EXP-008_same_hour_analysis/correlations.json
 doc/EXP-008_same_hour_analysis_summary.md
+```
+
+### 実装済みコマンド
+
+Synthetic:
+
+```bash
+uv run decoupled-ts same-hour-analysis --config configs/EXP-008_same_hour_analysis_synthetic.json
+```
+
+FreshRetailNet:
+
+```bash
+uv run decoupled-ts same-hour-analysis --config configs/EXP-008_same_hour_analysis_freshretailnet.json
 ```
 
 ### 判断基準

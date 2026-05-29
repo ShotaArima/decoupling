@@ -14,6 +14,8 @@ def main() -> None:
     evaluate.add_argument("--checkpoint", default="runs/freshretailnet_glr/best.pt")
     retail = sub.add_parser("retail-experiment")
     retail.add_argument("--config", default="configs/retail_multigrain.json")
+    same_hour = sub.add_parser("same-hour-analysis")
+    same_hour.add_argument("--config", default="configs/EXP-008_same_hour_analysis_freshretailnet.json")
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -33,6 +35,10 @@ def main() -> None:
         from .retail_experiments import run_retail_experiments
 
         print(json.dumps(run_retail_experiments(args.config), indent=2))
+    elif args.cmd == "same-hour-analysis":
+        from .retail_analysis import run_same_hour_analysis
+
+        print(json.dumps(run_same_hour_analysis(args.config), indent=2))
 
 
 if __name__ == "__main__":
