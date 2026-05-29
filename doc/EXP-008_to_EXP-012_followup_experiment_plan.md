@@ -102,6 +102,71 @@ FreshRetailNet:
 uv run decoupled-ts same-hour-analysis --config configs/EXP-008_same_hour_analysis_freshretailnet.json
 ```
 
+### 実験結果: Synthetic
+
+| model | WAPE | MAE | RMSE | bias |
+|---|---:|---:|---:|---:|
+| `naive_last_day` | 0.2397 | 32.3750 | 47.2000 | 0.1792 |
+| `naive_recent_mean` | 0.1452 | 19.6095 | 29.1819 | 0.0732 |
+| `naive_same_hour_recent_mean` | 0.1477 | 19.9495 | 29.6868 | 0.0772 |
+| `feature_flatten_mlp` | **0.1027** | **13.8713** | **25.6710** | -0.0153 |
+| `proposed_with_decouple` | 0.1030 | 13.9091 | 25.8636 | -0.0199 |
+
+Synthetic の相関:
+
+| item | value |
+|---|---:|
+| `same_hour_target_corr` | 0.9428 |
+| `history_daily_mean_target_corr` | 0.9472 |
+| `history_zero_rate_target_corr` | -0.7596 |
+| `history_stockout_rate_target_corr` | 0.0722 |
+| `n` | 120 |
+
+Synthetic では、同時刻平均と target の相関は高いものの、`feature_flatten_mlp` と `proposed_with_decouple` が naive baseline を大きく上回っています。これは、synthetic data では追加特徴量や latent model が naive では説明できない変動を拾えていることを示します。
+
+ただし、`feature_flatten_mlp` と `proposed_with_decouple` はほぼ同等です。予測性能だけで提案手法の優位性を主張するのは弱く、probe / heatmap / 反実仮想の解釈性評価が必要です。
+
+### 実験結果: FreshRetailNet
+
+| model | WAPE | MAE | RMSE | bias |
+|---|---:|---:|---:|---:|
+| `naive_last_day` | 0.3622 | 0.8629 | 1.4713 | 0.0804 |
+| `naive_recent_mean` | 0.5084 | 1.2112 | 2.2258 | 0.4704 |
+| `naive_same_hour_recent_mean` | **0.3405** | **0.8112** | **1.3154** | 0.2714 |
+| `feature_flatten_mlp` | 0.5664 | 1.3493 | 3.7134 | -0.3507 |
+| `proposed_with_decouple` | 0.6167 | 1.4692 | 4.3314 | -0.3748 |
+
+FreshRetailNet の相関:
+
+| item | value |
+|---|---:|
+| `same_hour_target_corr` | 0.9699 |
+| `history_daily_mean_target_corr` | 0.9644 |
+| `history_zero_rate_target_corr` | -0.6408 |
+| `history_stockout_rate_target_corr` | 0.0065 |
+| `n` | 500 |
+
+FreshRetailNet では、`same_hour_target_corr = 0.9699` と非常に高く、`naive_same_hour_recent_mean` が最良です。これは、FreshRetailNet の評価対象では「直近の同時刻パターン」が将来売上を強く説明していることを示します。
+
+学習モデルは naive と逆方向の bias を持っています。
+
+| model group | bias tendency |
+|---|---|
+| naive models | 正の bias。過大予測寄り |
+| learned models | 負の bias。過小予測寄り |
+
+このため、FreshRetailNet での失敗は単に表現分離が弱いだけでなく、モデルが短期同時刻パターンの水準を十分に保持できていないことが主因と考えられます。
+
+### EXP-008 の結論
+
+EXP-008 から、次の判断ができます。
+
+1. FreshRetailNet では same-hour recent mean が非常に強い baseline です。
+2. proposed model はこの baseline に予測性能で負けています。
+3. 次の改善はモデル複雑化ではなく、same-hour baseline を明示的に組み込む方向が妥当です。
+4. EXP-010 の residual baseline 化、EXP-011 の residual target 化を優先します。
+5. 店舗×カテゴリ集約は有効な可能性がありますが、まずは same-hour baseline をモデルに入れる方が直接的です。
+
 ### 判断基準
 
 `same_hour_recent_mean` が特定の条件で強いなら、次のモデル改善方針が決まります。
@@ -233,6 +298,35 @@ runs/EXP-010_residual_baseline/*/history.jsonl
 doc/EXP-010_residual_baseline_summary.md
 ```
 
+### 実装済みコマンド
+
+Smoke:
+
+```bash
+uv run decoupled-ts retail-experiment --config configs/EXP-010_residual_baseline_smoke.json
+```
+
+Synthetic:
+
+```bash
+uv run decoupled-ts retail-experiment --config configs/EXP-010_residual_baseline_synthetic.json
+```
+
+FreshRetailNet:
+
+```bash
+uv run decoupled-ts retail-experiment --config configs/EXP-010_residual_baseline_freshretailnet.json
+```
+
+主な結果ファイル:
+
+```text
+runs/EXP-010_residual_baseline_synthetic/summary.csv
+runs/EXP-010_residual_baseline_synthetic/*/predictions.csv
+runs/EXP-010_residual_baseline_freshretailnet/summary.csv
+runs/EXP-010_residual_baseline_freshretailnet/*/predictions.csv
+```
+
 ## EXP-011: 予測対象を naive baseline からの残差に変える
 
 ### 問い
@@ -282,6 +376,35 @@ runs/EXP-011_residual_target/*/predictions.csv
 runs/EXP-011_residual_target/*/metrics.json
 runs/EXP-011_residual_target/*/latent_diagnostics.json
 doc/EXP-011_residual_target_summary.md
+```
+
+### 実装済みコマンド
+
+Smoke:
+
+```bash
+uv run decoupled-ts retail-experiment --config configs/EXP-011_residual_target_smoke.json
+```
+
+Synthetic:
+
+```bash
+uv run decoupled-ts retail-experiment --config configs/EXP-011_residual_target_synthetic.json
+```
+
+FreshRetailNet:
+
+```bash
+uv run decoupled-ts retail-experiment --config configs/EXP-011_residual_target_freshretailnet.json
+```
+
+主な結果ファイル:
+
+```text
+runs/EXP-011_residual_target_synthetic/summary.csv
+runs/EXP-011_residual_target_synthetic/*/predictions.csv
+runs/EXP-011_residual_target_freshretailnet/summary.csv
+runs/EXP-011_residual_target_freshretailnet/*/predictions.csv
 ```
 
 ## EXP-012: probe の再設計

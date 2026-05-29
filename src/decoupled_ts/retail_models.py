@@ -118,6 +118,7 @@ class RetailMultiGrainModel(nn.Module):
         use_hour: bool = True,
         use_interaction: bool = False,
         forecast_days: int = 1,
+        forecast_activation: str = "softplus",
         dropout: float = 0.1,
     ):
         super().__init__()
@@ -132,6 +133,7 @@ class RetailMultiGrainModel(nn.Module):
         self.use_hour = use_hour
         self.use_interaction = use_interaction
         self.forecast_days = forecast_days
+        self.forecast_activation = forecast_activation
 
         self.global_encoder = GlobalEncoder(input_dim, hidden_dim, global_dim)
         self.day_encoder = DayEncoder(input_dim, hidden_dim, day_dim)
@@ -214,7 +216,16 @@ class RetailMultiGrainModel(nn.Module):
         if self.use_interaction:
             parts.append(self.interaction_encoder(future_day, z_hour))
         latent = torch.cat(parts, dim=-1)
-        return F.softplus(self.forecast_head(latent).squeeze(-1)).sum(dim=(1, 2))
+        pred = self.forecast_head(latent).squeeze(-1)
+        if self.forecast_activation == "softplus":
+            pred = F.softplus(pred)
+        elif self.forecast_activation == "relu":
+            pred = F.relu(pred)
+        elif self.forecast_activation == "linear":
+            pass
+        else:
+            raise ValueError(f"unknown forecast_activation: {self.forecast_activation}")
+        return pred.sum(dim=(1, 2))
 
 
 def flatten_to_grid(x: torch.Tensor) -> torch.Tensor:
