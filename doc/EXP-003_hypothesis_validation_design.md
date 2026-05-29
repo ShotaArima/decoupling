@@ -232,7 +232,50 @@ runs/EXP-003_hypothesis_smoke/summary.json
 runs/EXP-003_hypothesis_smoke/*/predictions.csv
 ```
 
-smoke は 1 epoch のため、学習モデルの性能評価には使いません。コードが通り、必要な成果物が生成されることを確認するための実験です。
+実行ログ上の時刻は以下です。
+
+| 項目 | 時刻 |
+|---|---|
+| start | 2026-05-30 05:54:11 |
+| complete | 2026-05-30 05:54:54 |
+
+データ監査結果は以下です。
+
+| item | value |
+|---|---:|
+| train examples | 90 |
+| valid examples | 19 |
+| test examples | 19 |
+| input dim | 10 |
+| days | 14 |
+| hours | 24 |
+| forecast days | 1 |
+| sales zero rate | 0.1481 |
+| sales observed rate | 0.9340 |
+| target mean | 59.2444 |
+| target std | 27.2386 |
+| target p50 | 55.0000 |
+| target p90 | 91.5000 |
+| subgroup classes | 4 |
+
+Smoke の結果は以下です。
+
+| model | best valid loss | WAPE | MAE | RMSE | bias | probe acc | majority acc |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `naive_last_day` | - | 0.2693 | 14.4737 | 18.6928 | 0.2341 | - | - |
+| `naive_recent_mean` | - | **0.1447** | **7.7783** | **11.0444** | 0.1402 | - | - |
+| `naive_same_hour_recent_mean` | - | 0.1482 | 7.9619 | 11.2194 | 0.1436 | - | - |
+| `feature_flatten_mlp` | 1247.4939 | 0.9345 | 50.2147 | 54.2574 | -0.9345 | - | - |
+| `proposed_no_decouple` | 906.2604 | 0.6757 | 36.3116 | 41.9582 | -0.6755 | 0.4211 | 0.3684 |
+| `proposed_with_decouple` | 843.0789 | 0.6355 | 34.1495 | 39.6998 | -0.6265 | 0.4737 | 0.3684 |
+
+Smoke は 1 epoch のため、学習モデルの性能評価には使いません。コードが通り、必要な成果物が生成されることを確認するための実験です。
+
+ただし、動作確認段階でも次の傾向は見えています。
+
+- `proposed_with_decouple` は `proposed_no_decouple` より WAPE / MAE / RMSE が良く、probe accuracy も majority baseline を上回りました。
+- 1 epoch では学習モデルが naive baseline に大きく負けており、強い過小予測 bias が残っています。
+- 本評価には `EXP-003_hypothesis_synthetic.json` または `EXP-003_hypothesis_freshretailnet.json` の複数 epoch 実行結果が必要です。
 
 ## 結果の読み方
 
