@@ -1,0 +1,59 @@
+{
+  "seed": 23,
+  "dataset": {
+    "name": "freshretailnet",
+    "hf_name": "Dingdong-Inc/FreshRetailNet-50K",
+    "data_dir": "data/freshretailnet",
+    "train_split": "train",
+    "eval_split": "eval",
+    "sample_id_columns": ["store_id", "product_id"],
+    "static_id_columns": ["city_id", "store_id", "management_group_id", "first_category_id", "second_category_id", "third_category_id", "product_id"],
+    "daily_numeric_columns": ["discount", "holiday_flag", "activity_flag", "precpt", "avg_temperature", "avg_humidity", "avg_wind_level"],
+    "hourly_sales_column": "hours_sale",
+    "hourly_stock_column": "hours_stock_status",
+    "stockout_value": 1,
+    "history_days": 28,
+    "forecast_days": 2,
+    "recent_days": 7,
+    "window_size": 24,
+    "cache_dir": "data/freshretailnet/cache",
+    "use_cache": true,
+    "max_train_series": 2000,
+    "max_eval_series": 500
+  },
+  "model": {
+    "hidden_dim": 128,
+    "global_dim": 8,
+    "day_dim": 8,
+    "hour_dim": 8,
+    "interaction_dim": 6,
+    "dropout": 0.1
+  },
+  "loss": {
+    "reconstruction_weight": 0.05,
+    "history_sales_weight": 0.2,
+    "decouple_weight": 0.01,
+    "stockout_weighting": "mask",
+    "stockout_weight": 0.1
+  },
+  "train": {
+    "batch_size": 128,
+    "epochs": 30,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "huber_delta": 25.0,
+    "num_workers": 2,
+    "pin_memory": true,
+    "selection_metric": "valid_wape",
+    "early_stopping_patience": 5,
+    "early_stopping_min_delta": 0.0,
+    "device": "auto",
+    "output_dir": "runs/EXP-004_valid_wape_checkpoint_freshretailnet"
+  },
+  "experiments": [
+    {"name": "feature_flatten_mlp", "type": "flatten_mlp"},
+    {"name": "global_only", "type": "multigrain", "use_day": false, "use_hour": false, "use_interaction": false},
+    {"name": "proposed_with_decouple", "type": "multigrain", "use_day": true, "use_hour": true, "use_interaction": false}
+  ]
+}
