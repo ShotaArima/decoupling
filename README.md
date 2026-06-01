@@ -121,3 +121,11 @@ uv run decoupled-ts residual-diagnostics --config configs/2-Exp-1_residual_diagn
 ```
 
 This compares baseline components such as recent same-hour means, then analyzes structure in `r = y - b` by hour, weekday, and subgroup. Outputs are written under `analysis.output_dir`, including `baseline_metrics.json`, `summary.json`, and residual CSV heatmaps.
+
+To train residual representation models and evaluate `b + r_hat` correction:
+
+```bash
+uv run decoupled-ts residual-experiment --config configs/2-Exp-2_to_6_residual_smoke.json
+uv run decoupled-ts residual-experiment --config configs/2-Exp-2_to_6_residual_synthetic.json
+uv run decoupled-ts residual-experiment --config configs/2-Exp-2_to_6_residual_freshretailnet.json
+```

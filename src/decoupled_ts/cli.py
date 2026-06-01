@@ -16,6 +16,8 @@ def main() -> None:
     retail.add_argument("--config", default="configs/retail_multigrain.json")
     residual = sub.add_parser("residual-diagnostics")
     residual.add_argument("--config", default="configs/2-Exp-1_residual_diagnostics_smoke.json")
+    residual_exp = sub.add_parser("residual-experiment")
+    residual_exp.add_argument("--config", default="configs/2-Exp-2_to_6_residual_smoke.json")
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -39,6 +41,10 @@ def main() -> None:
         from .residual_diagnostics import run_residual_diagnostics
 
         print(json.dumps(run_residual_diagnostics(args.config), indent=2))
+    elif args.cmd == "residual-experiment":
+        from .residual_experiments import run_residual_experiments
+
+        print(json.dumps(run_residual_experiments(args.config), indent=2))
 
 
 if __name__ == "__main__":

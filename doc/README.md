@@ -9,3 +9,5 @@
 | EXP-005 | [EXP-004_to_EXP-007_next_experiment_design.md](EXP-004_to_EXP-007_next_experiment_design.md) | 30 epoch の synthetic / FreshRetailNet 本実験 |
 | EXP-006 | [EXP-004_to_EXP-007_next_experiment_design.md](EXP-004_to_EXP-007_next_experiment_design.md) | naive baseline と proposed の比較可能性確認 |
 | EXP-007 | [EXP-004_to_EXP-007_next_experiment_design.md](EXP-004_to_EXP-007_next_experiment_design.md) | 欠品重み、probe、hour heatmap |
+| 2-Exp-1 | [2-Exp-1_residual_diagnostics_design.md](2-Exp-1_residual_diagnostics_design.md) | 基準成分 `b` と残差 `r = y - b` の構造診断 |
+| 2-Exp-2〜6 | [2-Exp-2_to_6_residual_representation_design.md](2-Exp-2_to_6_residual_representation_design.md) | 残差表現学習、再構成、probe、heatmap、`b + r_hat` 補正評価 |

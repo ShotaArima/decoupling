@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from torch.utils.data import DataLoader
 
@@ -205,10 +206,134 @@ def _write_heatmap(path: Path, residual: np.ndarray, observed: np.ndarray, weekd
             writer.writerow(row)
 
 
+def _variance_explained_by_group(residual: np.ndarray, observed: np.ndarray, group: np.ndarray) -> float:
+    keep = observed > 0
+    y = residual[keep]
+    if y.size == 0:
+        return 0.0
+    total_var = float(np.var(y))
+    if total_var <= 1e-12:
+        return 0.0
+    g = group[keep]
+    explained = 0.0
+    for value in np.unique(g):
+        group_y = y[g == value]
+        if group_y.size:
+            explained += group_y.size / y.size * float((group_y.mean() - y.mean()) ** 2)
+    return float(explained / total_var)
+
+
+def _bin_by_quantiles(values: np.ndarray, observed: np.ndarray, bins: int) -> np.ndarray:
+    keep_values = values[observed > 0]
+    if keep_values.size == 0 or np.allclose(keep_values, keep_values[0]):
+        return np.zeros_like(values, dtype=np.int64)
+    quantiles = np.quantile(keep_values, np.linspace(0.0, 1.0, bins + 1)[1:-1])
+    return np.digitize(values, np.unique(quantiles)).astype(np.int64)
+
+
+def _write_high_residual_summary(
+    path: Path,
+    residual: np.ndarray,
+    sales: np.ndarray,
+    observed: np.ndarray,
+    labels: dict[str, np.ndarray],
+    subgroup: np.ndarray,
+    top_rate: float,
+) -> dict[str, float]:
+    keep = observed > 0
+    abs_residual = np.abs(residual)
+    threshold = float(np.quantile(abs_residual[keep], 1.0 - top_rate)) if keep.any() else 0.0
+    high = keep & (abs_residual >= threshold)
+    low = keep & (abs_residual < threshold)
+    fields = ["segment", "count", "sales_mean", "abs_residual_mean", "discount_mean", "holiday_rate", "stockout_rate", "most_common_hour", "most_common_weekday", "subgroup_classes"]
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for name, mask in (("top_abs_residual", high), ("other_observed", low)):
+            if not mask.any():
+                continue
+            hour_values, hour_counts = np.unique(labels["hour"][mask], return_counts=True)
+            weekday_values, weekday_counts = np.unique(labels["weekday"][mask], return_counts=True)
+            writer.writerow(
+                {
+                    "segment": name,
+                    "count": int(mask.sum()),
+                    "sales_mean": float(sales[mask].mean()),
+                    "abs_residual_mean": float(abs_residual[mask].mean()),
+                    "discount_mean": float(labels["discount"][mask].mean()),
+                    "holiday_rate": float(labels["holiday"][mask].mean()),
+                    "stockout_rate": float((1.0 - observed)[mask].mean()),
+                    "most_common_hour": int(hour_values[np.argmax(hour_counts)]),
+                    "most_common_weekday": int(weekday_values[np.argmax(weekday_counts)]),
+                    "subgroup_classes": int(len(np.unique(subgroup[mask]))),
+                }
+            )
+    return {
+        "top_abs_residual_rate": float(top_rate),
+        "top_abs_residual_threshold": threshold,
+        "top_abs_residual_count": float(high.sum()),
+        "top_abs_residual_mean_abs": float(abs_residual[high].mean()) if high.any() else 0.0,
+        "other_observed_mean_abs": float(abs_residual[low].mean()) if low.any() else 0.0,
+    }
+
+
+def _baseline_metrics_by_series_activity(
+    sales: np.ndarray,
+    observed: np.ndarray,
+    baselines: dict[str, np.ndarray],
+    out_dir: Path,
+) -> dict[str, dict[str, dict[str, float]]]:
+    observed_counts = observed.sum(axis=(1, 2)).clip(min=1.0)
+    series_mean = (sales * observed).sum(axis=(1, 2)) / observed_counts
+    active = series_mean > 0.0
+    segments = {"zero_mean_series": ~active, "nonzero_mean_series": active}
+    rows = []
+    results: dict[str, dict[str, dict[str, float]]] = {}
+    for segment_name, sample_mask in segments.items():
+        if not sample_mask.any():
+            continue
+        segment_metrics = baseline_metrics(sales[sample_mask], observed[sample_mask], {k: v[sample_mask] for k, v in baselines.items()})
+        results[segment_name] = segment_metrics
+        for baseline_name, metrics in segment_metrics.items():
+            rows.append({"segment": segment_name, "baseline": baseline_name, **metrics})
+    if rows:
+        with (out_dir / "baseline_metrics_by_series_activity.csv").open("w", newline="", encoding="utf-8") as f:
+            fieldnames = ["segment", "baseline", *sorted({key for row in rows for key in row if key not in {"segment", "baseline"}})]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+    return results
+
+
+def _run_nonlinear_probes(x: np.ndarray, y: np.ndarray, seed: int) -> dict[str, float]:
+    if len(y) < 100:
+        return {}
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(len(y))
+    split = max(1, int(len(y) * 0.8))
+    train_idx = order[:split]
+    test_idx = order[split:]
+    if len(test_idx) == 0:
+        return {}
+    metrics: dict[str, float] = {}
+    rf = RandomForestRegressor(n_estimators=80, min_samples_leaf=20, random_state=seed, n_jobs=-1)
+    rf.fit(x[train_idx], y[train_idx])
+    rf_pred = rf.predict(x[test_idx])
+    metrics["random_forest_probe_r2"] = float(rf.score(x[test_idx], y[test_idx]))
+    metrics["random_forest_probe_mae"] = float(np.mean(np.abs(rf_pred - y[test_idx])))
+    gb = GradientBoostingRegressor(n_estimators=120, max_depth=3, random_state=seed)
+    gb.fit(x[train_idx], y[train_idx])
+    gb_pred = gb.predict(x[test_idx])
+    metrics["gradient_boosting_probe_r2"] = float(gb.score(x[test_idx], y[test_idx]))
+    metrics["gradient_boosting_probe_mae"] = float(np.mean(np.abs(gb_pred - y[test_idx])))
+    return metrics
+
+
 def residual_structure_diagnostics(
     split_data: dict[str, np.ndarray],
     config: dict[str, Any],
     baseline: np.ndarray,
+    baselines: dict[str, np.ndarray],
     out_dir: Path,
 ) -> dict[str, float]:
     grid = split_data["grid"]
@@ -217,10 +342,25 @@ def residual_structure_diagnostics(
     residual = sales - baseline
     labels = _labels_from_grid(grid, config)
     subgroup = np.broadcast_to(split_data["subgroup"][:, None, None], sales.shape)
+    stockout_rate = np.broadcast_to((1.0 - observed).mean(axis=(1, 2))[:, None, None], sales.shape)
+    stockout_rate_bin = _bin_by_quantiles(stockout_rate, observed, int(config.get("analysis", {}).get("diagnostic_bins", 5)))
+    discount_bin = _bin_by_quantiles(labels["discount"], observed, int(config.get("analysis", {}).get("diagnostic_bins", 5)))
     _write_group_summary(out_dir / "residual_by_hour.csv", residual, sales, observed, labels["hour"], "hour")
     _write_group_summary(out_dir / "residual_by_weekday.csv", residual, sales, observed, labels["weekday"], "weekday")
     _write_group_summary(out_dir / "residual_by_subgroup.csv", residual, sales, observed, subgroup, "subgroup")
+    _write_group_summary(out_dir / "residual_by_stockout_rate_bin.csv", residual, sales, observed, stockout_rate_bin, "stockout_rate_bin")
+    _write_group_summary(out_dir / "residual_by_discount_bin.csv", residual, sales, observed, discount_bin, "discount_bin")
     _write_heatmap(out_dir / "residual_weekday_hour_heatmap.csv", residual, observed, labels["weekday"], labels["hour"])
+    top_summary = _write_high_residual_summary(
+        out_dir / "high_abs_residual_top10_summary.csv",
+        residual,
+        sales,
+        observed,
+        labels,
+        subgroup,
+        top_rate=float(config.get("analysis", {}).get("top_residual_rate", 0.1)),
+    )
+    activity_metrics = _baseline_metrics_by_series_activity(sales, observed, baselines, out_dir)
 
     keep = observed > 0
     features = [
@@ -230,6 +370,8 @@ def residual_structure_diagnostics(
         labels["hour"][keep].astype(np.float32),
         labels["weekday"][keep].astype(np.float32),
         subgroup[keep].astype(np.float32),
+        stockout_rate[keep].astype(np.float32),
+        discount_bin[keep].astype(np.float32),
     ]
     x = np.stack(features, axis=1)
     y = residual[keep]
@@ -242,13 +384,25 @@ def residual_structure_diagnostics(
     reg = LinearRegression()
     reg.fit(x, y)
     pred = reg.predict(x)
+    group_explained = {
+        "group_variance_explained_hour": _variance_explained_by_group(residual, observed, labels["hour"]),
+        "group_variance_explained_weekday": _variance_explained_by_group(residual, observed, labels["weekday"]),
+        "group_variance_explained_subgroup": _variance_explained_by_group(residual, observed, subgroup),
+        "group_variance_explained_stockout_rate_bin": _variance_explained_by_group(residual, observed, stockout_rate_bin),
+        "group_variance_explained_discount_bin": _variance_explained_by_group(residual, observed, discount_bin),
+    }
+    probe_metrics = _run_nonlinear_probes(x, y, int(config["seed"])) if bool(config.get("analysis", {}).get("nonlinear_probes", True)) else {}
     return {
         "residual_mean": float(y.mean()),
         "residual_abs_mean": float(np.abs(y).mean()),
         "residual_std": float(y.std()),
         "observed_cells": float(keep.sum()),
-        "linear_probe_r2_discount_holiday_weather_hour_weekday_subgroup": float(reg.score(x, y)),
+        "linear_probe_r2": float(reg.score(x, y)),
         "linear_probe_mae": float(np.mean(np.abs(pred - y))),
+        **group_explained,
+        **probe_metrics,
+        **{f"high_residual_{key}": value for key, value in top_summary.items()},
+        "series_activity_segments": float(len(activity_metrics)),
     }
 
 
@@ -277,7 +431,7 @@ def run_residual_diagnostics(config_path: str) -> dict[str, Any]:
     chosen = str(analysis_cfg.get("baseline_method", "same_hour_recent_mean"))
     if chosen not in baselines:
         raise ValueError(f"unknown baseline_method={chosen!r}; choose one of {BASELINE_METHODS}")
-    residual_metrics = residual_structure_diagnostics(split_data, config, baselines[chosen], out_dir)
+    residual_metrics = residual_structure_diagnostics(split_data, config, baselines[chosen], baselines, out_dir)
     summary = {
         "split": split_name,
         "examples": float(len(dataset)),

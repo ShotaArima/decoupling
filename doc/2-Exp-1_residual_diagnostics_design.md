@@ -77,7 +77,11 @@ root 出力先は `analysis.output_dir` です。
 | `residual_by_hour.csv` | 時間帯別の残差平均・絶対残差平均 |
 | `residual_by_weekday.csv` | 曜日別の残差平均・絶対残差平均 |
 | `residual_by_subgroup.csv` | subgroup 別の残差平均・絶対残差平均 |
+| `residual_by_stockout_rate_bin.csv` | 系列欠品率 bin 別の残差平均・絶対残差平均 |
+| `residual_by_discount_bin.csv` | discount bin 別の残差平均・絶対残差平均 |
 | `residual_weekday_hour_heatmap.csv` | 曜日 x 時間帯の平均残差 heatmap |
+| `baseline_metrics_by_series_activity.csv` | ゼロ平均系列 / 非ゼロ平均系列別の baseline 指標 |
+| `high_abs_residual_top10_summary.csv` | 高残差上位10%とその他の比較 |
 | `run.log` | 実行ログ |
 
 ## Smoke 実行結果
@@ -111,3 +115,18 @@ uv run decoupled-ts residual-diagnostics --config configs/2-Exp-1_residual_diagn
 
 `linear probe R2` は `discount`, `holiday`, `weather`, `hour`, `weekday`, `subgroup` から残差を説明する単純な線形回帰です。
 本番データではこの値と `residual_by_*.csv` を見て、残差が完全なノイズかどうかを判断します。
+
+## 拡張診断
+
+現在の runner では、線形回帰だけでなく以下も出力します。
+
+| 指標 / 出力 | 目的 |
+|---|---|
+| `group_variance_explained_hour` | hour group mean が残差分散をどれだけ説明するか |
+| `group_variance_explained_weekday` | weekday group mean が残差分散をどれだけ説明するか |
+| `group_variance_explained_subgroup` | subgroup group mean が残差分散をどれだけ説明するか |
+| `group_variance_explained_stockout_rate_bin` | 系列欠品率 bin の効果を見る |
+| `group_variance_explained_discount_bin` | discount bin の効果を見る |
+| `random_forest_probe_r2` | 非線形 probe で残差構造を拾えるか |
+| `gradient_boosting_probe_r2` | 非線形 probe で残差構造を拾えるか |
+| `high_residual_*` | 高残差上位10%にだけ構造があるか |
