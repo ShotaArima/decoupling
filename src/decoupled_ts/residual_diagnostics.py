@@ -138,7 +138,7 @@ def baseline_metrics(sales: np.ndarray, observed: np.ndarray, baselines: dict[st
 
 def _feature_indices(config: dict[str, Any]) -> dict[str, int | None]:
     data_cfg = config["dataset"]
-    if data_cfg["name"] == "synthetic_retail":
+    if data_cfg["name"] in {"synthetic_retail", "structured_residual_retail"}:
         return {
             "discount": 2,
             "holiday": 3,

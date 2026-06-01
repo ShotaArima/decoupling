@@ -1,0 +1,50 @@
+{
+  "seed": 17,
+  "dataset": {
+    "name": "structured_residual_retail",
+    "n_series": 1000,
+    "days": 35,
+    "hours": 24,
+    "forecast_days": 2,
+    "recent_days": 7,
+    "valid_ratio": 0.15,
+    "test_ratio": 0.15,
+    "noise_std": 0.2,
+    "stockout_rate": 0.04,
+    "residual_scale": 1.0
+  },
+  "model": {
+    "hidden_dim": 128,
+    "global_dim": 8,
+    "local_dim": 8,
+    "day_dim": 8,
+    "hour_dim": 8,
+    "interaction_dim": 6,
+    "dropout": 0.1
+  },
+  "loss": {
+    "decouple_weight": 0.01
+  },
+  "train": {
+    "batch_size": 256,
+    "epochs": 1,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "num_workers": 0,
+    "pin_memory": true,
+    "selection_metric": "valid_loss_residual_reconstruction",
+    "device": "auto",
+    "output_dir": "runs/2-Exp-8_structured_residual_diagnostics_synthetic"
+  },
+  "analysis": {
+    "output_dir": "runs/2-Exp-8_structured_residual_diagnostics_synthetic",
+    "split": "train",
+    "baseline_method": "same_hour_recent_mean",
+    "batch_size": 256,
+    "max_regression_rows": 250000,
+    "diagnostic_bins": 5,
+    "nonlinear_probes": true
+  },
+  "experiments": []
+}
