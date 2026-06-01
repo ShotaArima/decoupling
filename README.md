@@ -137,3 +137,12 @@ uv run decoupled-ts residual-experiment --config configs/2-Exp-7_swap_regulariza
 uv run decoupled-ts residual-experiment --config configs/2-Exp-7_swap_regularization_synthetic.json
 uv run decoupled-ts residual-experiment --config configs/2-Exp-7_swap_regularization_freshretailnet.json
 ```
+
+To validate the hypothesis under a synthetic dataset with explicit residual global/day/hour/interaction structure:
+
+```bash
+uv run decoupled-ts residual-diagnostics --config configs/2-Exp-8_structured_residual_diagnostics_smoke.json
+uv run decoupled-ts residual-experiment --config configs/2-Exp-8_structured_residual_smoke.json
+uv run decoupled-ts residual-diagnostics --config configs/2-Exp-8_structured_residual_diagnostics_synthetic.json
+uv run decoupled-ts residual-experiment --config configs/2-Exp-8_structured_residual_synthetic.json
+```

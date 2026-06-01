@@ -17,3 +17,4 @@
 | 2-Exp-1 | [2-Exp-1_residual_diagnostics_design.md](2-Exp-1_residual_diagnostics_design.md) | 基準成分 `b` と残差 `r = y - b` の構造診断 |
 | 2-Exp-2〜6 | [2-Exp-2_to_6_residual_representation_design.md](2-Exp-2_to_6_residual_representation_design.md) | 残差表現学習、再構成、probe、heatmap、`b + r_hat` 補正評価 |
 | 2-Exp-7 | [2-Exp-7_swap_regularization_design.md](2-Exp-7_swap_regularization_design.md) | 反実仮想 swap 正則化あり/なしの分離性比較 |
+| 2-Exp-8 | [2-Exp-8_structured_residual_synthetic_design.md](2-Exp-8_structured_residual_synthetic_design.md) | 真の residual 構造を持つ synthetic で仮説成立条件を検証 |
