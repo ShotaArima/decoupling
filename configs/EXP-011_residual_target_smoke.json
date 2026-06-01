@@ -1,0 +1,56 @@
+{
+  "seed": 43,
+  "dataset": {
+    "name": "synthetic_retail",
+    "n_series": 128,
+    "days": 14,
+    "hours": 24,
+    "forecast_days": 1,
+    "recent_days": 7,
+    "valid_ratio": 0.15,
+    "test_ratio": 0.15,
+    "noise_std": 0.15,
+    "stockout_rate": 0.06
+  },
+  "model": {
+    "hidden_dim": 40,
+    "global_dim": 4,
+    "day_dim": 4,
+    "hour_dim": 4,
+    "interaction_dim": 3,
+    "dropout": 0.1,
+    "forecast_activation": "linear"
+  },
+  "prediction": {
+    "mode": "residual_target",
+    "baseline_method": "naive_same_hour_recent_mean",
+    "recent_days": 7,
+    "nonnegative": true
+  },
+  "loss": {
+    "reconstruction_weight": 0.02,
+    "history_sales_weight": 0.05,
+    "decouple_weight": 0.001,
+    "stockout_weighting": "mask",
+    "stockout_weight": 0.1
+  },
+  "train": {
+    "batch_size": 32,
+    "epochs": 3,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "huber_delta": 25.0,
+    "num_workers": 0,
+    "pin_memory": false,
+    "selection_metric": "valid_wape",
+    "early_stopping_patience": 2,
+    "early_stopping_min_delta": 0.0,
+    "device": "auto",
+    "output_dir": "runs/EXP-011_residual_target_smoke"
+  },
+  "experiments": [
+    {"name": "naive_same_hour_recent_mean", "type": "naive_same_hour_recent_mean", "recent_days": 7},
+    {"name": "proposed_residual_target", "type": "multigrain", "use_day": true, "use_hour": true, "use_interaction": false}
+  ]
+}
