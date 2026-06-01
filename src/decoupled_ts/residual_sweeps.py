@@ -11,19 +11,19 @@ from .residual_experiments import run_residual_experiments
 
 
 def _mean_std(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    variants = sorted({row["name"] for row in rows})
+    groups = sorted({(str(row.get("subset", "default")), row["name"]) for row in rows})
     metric_keys = sorted(
         {
             key
             for row in rows
             for key, value in row.items()
-            if key not in {"name", "seed"} and isinstance(value, int | float)
+            if key not in {"name", "seed", "subset"} and isinstance(value, int | float)
         }
     )
     summary = []
-    for variant in variants:
-        subset = [row for row in rows if row["name"] == variant]
-        out: dict[str, Any] = {"name": variant, "runs": len(subset)}
+    for subset_name, variant in groups:
+        subset = [row for row in rows if row["name"] == variant and str(row.get("subset", "default")) == subset_name]
+        out: dict[str, Any] = {"subset": subset_name, "name": variant, "runs": len(subset)}
         for key in metric_keys:
             values = [float(row[key]) for row in subset if key in row]
             if not values:
@@ -52,22 +52,30 @@ def run_residual_sweep(config_path: str) -> dict[str, Any]:
     sweep_cfg = base_config.get("sweep", {})
     seeds = [int(seed) for seed in sweep_cfg.get("seeds", [base_config["seed"]])]
     root_out = Path(sweep_cfg.get("output_dir", str(base_config["train"]["output_dir"]) + "_sweep"))
+    subsets = sweep_cfg.get("subsets") or [{"name": "default", "subset_filter": base_config.get("dataset", {}).get("subset_filter", {})}]
     root_out.mkdir(parents=True, exist_ok=True)
     logger = setup_run_logger(root_out, name="residual_sweep")
-    logger.info("Residual sweep start config=%s seeds=%s", config_path, seeds)
+    logger.info("Residual sweep start config=%s seeds=%s subsets=%s", config_path, seeds, [row.get("name", "default") for row in subsets])
     write_json(root_out / "base_config.json", base_config)
 
     all_rows: list[dict[str, Any]] = []
-    for seed in seeds:
-        config = deepcopy(base_config)
-        config["seed"] = seed
-        config["train"]["output_dir"] = str(root_out / f"seed_{seed}")
-        config_path_for_seed = root_out / f"seed_{seed}_config.json"
-        write_json(config_path_for_seed, config)
-        logger.info("Running seed=%d output_dir=%s", seed, config["train"]["output_dir"])
-        result = run_residual_experiments(str(config_path_for_seed))
-        for row in result["results"]:
-            all_rows.append({"seed": seed, **row})
+    for subset in subsets:
+        subset_name = str(subset.get("name", "default"))
+        for seed in seeds:
+            config = deepcopy(base_config)
+            config["seed"] = seed
+            config["dataset"]["subset_filter"] = {
+                **config.get("dataset", {}).get("subset_filter", {}),
+                **subset.get("subset_filter", {}),
+            }
+            run_name = f"{subset_name}_seed_{seed}"
+            config["train"]["output_dir"] = str(root_out / run_name)
+            config_path_for_seed = root_out / f"{run_name}_config.json"
+            write_json(config_path_for_seed, config)
+            logger.info("Running subset=%s seed=%d output_dir=%s", subset_name, seed, config["train"]["output_dir"])
+            result = run_residual_experiments(str(config_path_for_seed))
+            for row in result["results"]:
+                all_rows.append({"subset": subset_name, "seed": seed, **row})
 
     aggregate = _mean_std(all_rows)
     _write_csv(root_out / "all_results.csv", all_rows)

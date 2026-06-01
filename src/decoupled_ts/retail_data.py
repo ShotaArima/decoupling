@@ -226,6 +226,71 @@ def _same_hour_recent_mean_np(sales: np.ndarray, observed: np.ndarray, recent_da
     return baseline
 
 
+def _retail_feature_indices(cfg: dict[str, Any]) -> dict[str, int | None]:
+    if cfg["name"] in {"synthetic_retail", "structured_residual_retail"}:
+        return {
+            "discount": 2,
+            "holiday": 3,
+            "hour_sin": 5,
+            "hour_cos": 6,
+            "dow_sin": 7,
+            "dow_cos": 8,
+        }
+    numeric_cols = list(cfg.get("daily_numeric_columns", []))
+    offset = 2 + len(numeric_cols)
+    return {
+        "discount": 2 + numeric_cols.index("discount") if "discount" in numeric_cols else None,
+        "holiday": 2 + numeric_cols.index("holiday_flag") if "holiday_flag" in numeric_cols else None,
+        "hour_sin": offset,
+        "hour_cos": offset + 1,
+        "dow_sin": offset + 2,
+        "dow_cos": offset + 3,
+    }
+
+
+def _labels_from_retail_grid(grid: np.ndarray, cfg: dict[str, Any]) -> dict[str, np.ndarray]:
+    idx = _retail_feature_indices(cfg)
+    hour_angle = np.arctan2(grid[..., int(idx["hour_sin"])], grid[..., int(idx["hour_cos"])])
+    dow_angle = np.arctan2(grid[..., int(idx["dow_sin"])], grid[..., int(idx["dow_cos"])])
+    labels = {
+        "hour": np.rint((np.mod(hour_angle, 2 * np.pi)) / (2 * np.pi) * 24).astype(np.int64) % 24,
+        "weekday": np.rint((np.mod(dow_angle, 2 * np.pi)) / (2 * np.pi) * 7).astype(np.int64) % 7,
+    }
+    for key in ("discount", "holiday"):
+        labels[key] = np.zeros(grid.shape[:3], dtype=np.float32) if idx[key] is None else grid[..., int(idx[key])].astype(np.float32)
+    return labels
+
+
+def _variance_explained_single(residual: np.ndarray, observed: np.ndarray, group: np.ndarray) -> float:
+    keep = observed > 0
+    y = residual[keep]
+    if y.size == 0:
+        return 0.0
+    total_var = float(np.var(y))
+    if total_var <= 1e-12:
+        return 0.0
+    g = group[keep]
+    explained = 0.0
+    for value in np.unique(g):
+        group_y = y[g == value]
+        if group_y.size:
+            explained += group_y.size / y.size * float((group_y.mean() - y.mean()) ** 2)
+    return float(explained / total_var)
+
+
+def _interaction_nonadditive_score(residual: np.ndarray, observed: np.ndarray) -> float:
+    keep = observed > 0
+    if not keep.any():
+        return 0.0
+    y = np.where(keep, residual, np.nan)
+    overall = float(np.nanmean(y))
+    day_mean = np.nanmean(y, axis=1, keepdims=True)
+    hour_mean = np.nanmean(y, axis=0, keepdims=True)
+    additive = day_mean + hour_mean - overall
+    nonadditive = np.where(keep, y - additive, np.nan)
+    return float(np.nanmean(np.abs(nonadditive))) if np.isfinite(nonadditive).any() else 0.0
+
+
 def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
     filter_cfg = cfg.get("subset_filter", {})
     if not bool(filter_cfg.get("enabled", False)):
@@ -240,6 +305,8 @@ def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
         mask = batch["mask"].numpy()
         sales = x[:, 0, :].reshape(x.shape[0], -1, hours)
         observed = mask[:, 0, :].reshape(mask.shape[0], -1, hours)
+        grid = x.transpose(0, 2, 1).reshape(x.shape[0], -1, hours, x.shape[1])
+        labels = _labels_from_retail_grid(grid, cfg)
         observed_count = np.clip(observed.sum(axis=(1, 2)), 1.0, None)
         observed_sales = sales * observed
         mean_sales = observed_sales.sum(axis=(1, 2)) / observed_count
@@ -257,6 +324,17 @@ def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
                     "observed_rate": float(observed_rate[i]),
                     "stockout_rate": float(1.0 - observed_rate[i]),
                     "residual_std": float(residual_std[i]),
+                    "baseline_mae": float(np.abs(residual[i][observed[i] > 0]).mean()) if bool((observed[i] > 0).any()) else 0.0,
+                    "weekday_variance_explained": _variance_explained_single(residual[i], observed[i], labels["weekday"][i]),
+                    "hour_variance_explained": _variance_explained_single(residual[i], observed[i], labels["hour"][i]),
+                    "discount_variance_explained": _variance_explained_single(
+                        residual[i],
+                        observed[i],
+                        np.digitize(labels["discount"][i], np.unique(np.quantile(labels["discount"][i][observed[i] > 0], [0.33, 0.67]))).astype(np.int64)
+                        if bool((observed[i] > 0).any()) and float(np.std(labels["discount"][i][observed[i] > 0])) > 1e-8
+                        else np.zeros_like(labels["discount"][i], dtype=np.int64),
+                    ),
+                    "interaction_nonadditive": _interaction_nonadditive_score(residual[i], observed[i]),
                 }
             )
         offset += x.shape[0]

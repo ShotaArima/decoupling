@@ -156,3 +156,10 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-9_freshretailnet_subse
 ```
 
 The sweep runner writes per-seed runs plus `all_results.csv`, `aggregate.csv`, and `summary.json` under `sweep.output_dir`.
+
+To evaluate factor-structured subsets with positive probes, leakage probes, and targeted latent ablations:
+
+```bash
+uv run decoupled-ts residual-sweep --config configs/2-Exp-10_factor_subsets_smoke.json
+uv run decoupled-ts residual-sweep --config configs/2-Exp-10_factor_subsets_freshretailnet.json
+```

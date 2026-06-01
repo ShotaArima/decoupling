@@ -187,7 +187,7 @@ def run_epoch(model: nn.Module, loader: DataLoader, config: dict[str, Any], devi
 def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, Any], device: torch.device) -> dict[str, np.ndarray]:
     model.eval()
     parts = {"sales": [], "baseline": [], "residual": [], "residual_hat": [], "observed": [], "grid": [], "subgroup": []}
-    latents: dict[str, list[np.ndarray]] = {"z_global": [], "z_local": [], "z_day": [], "z_hour": []}
+    latents: dict[str, list[np.ndarray]] = {"z_global": [], "z_local": [], "z_day": [], "z_hour": [], "z_interaction": []}
     for batch in tqdm(loader, desc="residual test", unit="batch"):
         batch_dev = {key: value.to(device, non_blocking=True) for key, value in batch.items()}
         rb = residual_batch(batch_dev, config)
@@ -226,6 +226,52 @@ def residual_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
     if high.any():
         metrics["high_residual_top10_baseline_mae"] = float(np.mean(np.abs(baseline[high] - sales[high])))
         metrics["high_residual_top10_corrected_mae"] = float(np.mean(np.abs(corrected[high] - sales[high])))
+    return metrics
+
+
+@torch.no_grad()
+def evaluate_ablation_metrics(model: nn.Module, loader: DataLoader, config: dict[str, Any], device: torch.device) -> dict[str, float]:
+    if not isinstance(model, ResidualMultiGrainAE):
+        return {}
+    model.eval()
+    components = [
+        ("z_global", model.use_global),
+        ("z_day", model.use_day),
+        ("z_hour", model.use_hour),
+        ("z_interaction", model.use_interaction),
+    ]
+    totals: dict[str, float] = {"full_abs_error": 0.0}
+    for key, enabled in components:
+        if enabled:
+            totals[f"ablation_zero_{key}_abs_error"] = 0.0
+    observed_total = 0.0
+    for batch in tqdm(loader, desc="ablation diagnostics", unit="batch"):
+        batch = {key: value.to(device, non_blocking=True) for key, value in batch.items()}
+        rb = residual_batch(batch, config)
+        out = model(rb["x"], rb["mask"])
+        observed = rb["observed"]
+        residual = rb["residual"]
+        observed_total += float(observed.sum().detach())
+        totals["full_abs_error"] += float((torch.abs(out["residual_hat"] - residual) * observed).sum().detach())
+        for key, enabled in components:
+            if not enabled or key not in out:
+                continue
+            zeros = torch.zeros_like(out[key])
+            kwargs = {key: zeros}
+            ablated = model.decode_from_parts(out, **kwargs)
+            totals[f"ablation_zero_{key}_abs_error"] += float((torch.abs(ablated - residual) * observed).sum().detach())
+    denom = max(observed_total, 1.0)
+    full_mae = totals["full_abs_error"] / denom
+    metrics: dict[str, float] = {"ablation_full_residual_mae": full_mae}
+    for key, enabled in components:
+        if not enabled:
+            continue
+        raw_key = f"ablation_zero_{key}_abs_error"
+        if raw_key not in totals:
+            continue
+        mae = totals[raw_key] / denom
+        metrics[f"ablation_zero_{key}_residual_mae"] = mae
+        metrics[f"ablation_zero_{key}_residual_mae_delta"] = mae - full_mae
     return metrics
 
 
@@ -305,15 +351,21 @@ def _probe_day_labels(grid: np.ndarray, config: dict[str, Any]) -> dict[str, np.
 
 def run_latent_probes(train_arrays: dict[str, np.ndarray], test_arrays: dict[str, np.ndarray], config: dict[str, Any]) -> dict[str, float]:
     metrics: dict[str, float] = {}
+    train_labels = _probe_day_labels(train_arrays["grid"], config)
+    test_labels = _probe_day_labels(test_arrays["grid"], config)
     if "z_global" in train_arrays and len(np.unique(train_arrays["subgroup"])) > 1:
         train_z = train_arrays["z_global"].reshape(train_arrays["z_global"].shape[0], -1)
         test_z = test_arrays["z_global"].reshape(test_arrays["z_global"].shape[0], -1)
         clf = LogisticRegression(max_iter=1000, class_weight="balanced")
         clf.fit(train_z, train_arrays["subgroup"])
         metrics["probe_z_global_subgroup_accuracy"] = float(accuracy_score(test_arrays["subgroup"], clf.predict(test_z)))
+        train_discount = train_labels["discount"].mean(axis=1)
+        test_discount = test_labels["discount"].mean(axis=1)
+        if float(np.std(train_discount)) > 1e-6:
+            reg = Ridge(alpha=1.0)
+            reg.fit(train_z, train_discount)
+            metrics["leakage_z_global_discount_mae"] = float(np.mean(np.abs(reg.predict(test_z) - test_discount)))
     if "z_day" in train_arrays:
-        train_labels = _probe_day_labels(train_arrays["grid"], config)
-        test_labels = _probe_day_labels(test_arrays["grid"], config)
         train_z = train_arrays["z_day"].reshape(-1, train_arrays["z_day"].shape[-1])
         test_z = test_arrays["z_day"].reshape(-1, test_arrays["z_day"].shape[-1])
         train_weekday = train_labels["weekday"].reshape(-1)
@@ -328,6 +380,12 @@ def run_latent_probes(train_arrays: dict[str, np.ndarray], test_arrays: dict[str
             reg = Ridge(alpha=1.0)
             reg.fit(train_z, train_discount)
             metrics["probe_z_day_discount_mae"] = float(np.mean(np.abs(reg.predict(test_z) - test_discount)))
+        if len(np.unique(train_arrays["subgroup"])) > 1:
+            train_subgroup = np.repeat(train_arrays["subgroup"], train_arrays["z_day"].shape[1])
+            test_subgroup = np.repeat(test_arrays["subgroup"], test_arrays["z_day"].shape[1])
+            clf = LogisticRegression(max_iter=1000, class_weight="balanced")
+            clf.fit(train_z, train_subgroup)
+            metrics["leakage_z_day_subgroup_accuracy"] = float(accuracy_score(test_subgroup, clf.predict(test_z)))
     if "z_hour" in train_arrays:
         train_z = train_arrays["z_hour"].reshape(-1, train_arrays["z_hour"].shape[-1])
         test_z = test_arrays["z_hour"].reshape(-1, test_arrays["z_hour"].shape[-1])
@@ -336,11 +394,37 @@ def run_latent_probes(train_arrays: dict[str, np.ndarray], test_arrays: dict[str
         clf = LogisticRegression(max_iter=1000, class_weight="balanced")
         clf.fit(train_z, train_hour)
         metrics["probe_z_hour_hour_accuracy"] = float(accuracy_score(test_hour, clf.predict(test_z)))
+        if len(np.unique(train_arrays["subgroup"])) > 1:
+            train_subgroup = np.repeat(train_arrays["subgroup"], train_arrays["z_hour"].shape[1])
+            test_subgroup = np.repeat(test_arrays["subgroup"], test_arrays["z_hour"].shape[1])
+            clf = LogisticRegression(max_iter=1000, class_weight="balanced")
+            clf.fit(train_z, train_subgroup)
+            metrics["leakage_z_hour_subgroup_accuracy"] = float(accuracy_score(test_subgroup, clf.predict(test_z)))
+    if "z_interaction" in train_arrays:
+        train_z = train_arrays["z_interaction"].reshape(-1, train_arrays["z_interaction"].shape[-1])
+        test_z = test_arrays["z_interaction"].reshape(-1, test_arrays["z_interaction"].shape[-1])
+        train_weekday = np.broadcast_to(train_labels["weekday"][:, :, None], train_arrays["z_interaction"].shape[:3]).reshape(-1)
+        test_weekday = np.broadcast_to(test_labels["weekday"][:, :, None], test_arrays["z_interaction"].shape[:3]).reshape(-1)
+        train_hour = np.broadcast_to(np.arange(train_arrays["z_interaction"].shape[2])[None, None, :], train_arrays["z_interaction"].shape[:3]).reshape(-1)
+        test_hour = np.broadcast_to(np.arange(test_arrays["z_interaction"].shape[2])[None, None, :], test_arrays["z_interaction"].shape[:3]).reshape(-1)
+        train_bucket = train_weekday * train_arrays["z_interaction"].shape[2] + train_hour
+        test_bucket = test_weekday * test_arrays["z_interaction"].shape[2] + test_hour
+        if len(np.unique(train_weekday)) > 1:
+            clf = LogisticRegression(max_iter=1000, class_weight="balanced")
+            clf.fit(train_z, train_weekday)
+            metrics["probe_z_interaction_weekday_accuracy"] = float(accuracy_score(test_weekday, clf.predict(test_z)))
+        clf = LogisticRegression(max_iter=1000, class_weight="balanced")
+        clf.fit(train_z, train_hour)
+        metrics["probe_z_interaction_hour_accuracy"] = float(accuracy_score(test_hour, clf.predict(test_z)))
+        if len(np.unique(train_bucket)) > 1:
+            clf = LogisticRegression(max_iter=1000, class_weight="balanced")
+            clf.fit(train_z, train_bucket)
+            metrics["probe_z_interaction_weekday_hour_accuracy"] = float(accuracy_score(test_bucket, clf.predict(test_z)))
     return metrics
 
 
 def save_latent_outputs(arrays: dict[str, np.ndarray], out_dir: Path) -> None:
-    for key in ("z_global", "z_local", "z_day", "z_hour", "subgroup"):
+    for key in ("z_global", "z_local", "z_day", "z_hour", "z_interaction", "subgroup"):
         if key in arrays:
             np.save(out_dir / f"{key}.npy", arrays[key])
     if "z_hour" in arrays:
@@ -368,6 +452,7 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
         "z_local.npy",
         "z_day.npy",
         "z_hour.npy",
+        "z_interaction.npy",
         "subgroup.npy",
         "z_hour_heatmap.csv",
         "residual_predictions.csv",
@@ -410,6 +495,7 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     test_arrays = predict_residuals(model, test_loader, variant_config, device)
     metrics = residual_metrics(test_arrays)
     metrics.update(run_latent_probes(train_arrays, test_arrays, variant_config))
+    metrics.update(evaluate_ablation_metrics(model, test_loader, variant_config, device))
     metrics.update(evaluate_swap_diagnostics(model, test_loader, variant_config, device))
     save_residual_predictions(out_dir / "residual_predictions.csv", test_arrays)
     save_latent_outputs(test_arrays, out_dir)
