@@ -110,6 +110,47 @@ def residual_loss(out: dict[str, torch.Tensor], rb: dict[str, torch.Tensor], con
     return values
 
 
+def _sample_derangement(batch: int, device: torch.device) -> torch.Tensor:
+    if batch <= 1:
+        return torch.arange(batch, device=device)
+    return torch.roll(torch.randperm(batch, device=device), shifts=1)
+
+
+def _center_by_mean(x: torch.Tensor, dims: tuple[int, ...]) -> torch.Tensor:
+    return x - x.mean(dim=dims, keepdim=True)
+
+
+def swap_regularization_loss(model: nn.Module, out: dict[str, torch.Tensor], config: dict[str, Any]) -> dict[str, torch.Tensor]:
+    if not isinstance(model, ResidualMultiGrainAE):
+        return {}
+    swap_cfg = config.get("swap_regularization", {})
+    if not bool(swap_cfg.get("enabled", False)):
+        return {}
+    if out["residual_hat"].shape[0] <= 1:
+        return {}
+    perm = _sample_derangement(out["residual_hat"].shape[0], out["residual_hat"].device)
+    base = out["residual_hat"]
+    losses: dict[str, torch.Tensor] = {}
+    if model.use_global and "z_global" in out:
+        swapped = model.decode_from_parts(out, z_global=out["z_global"][perm])
+        # Swapping series identity should mainly change the whole-cell level, not day/hour shape after centering.
+        losses["loss_swap_global_shape"] = torch.mean(torch.abs(_center_by_mean(swapped, (1, 2)) - _center_by_mean(base, (1, 2))))
+    if model.use_day and "z_day" in out:
+        swapped = model.decode_from_parts(out, z_day=out["z_day"][perm])
+        # Day swaps should preserve hour profile after averaging over days.
+        losses["loss_swap_day_hour_invariance"] = torch.mean(torch.abs(swapped.mean(dim=1) - base.mean(dim=1)))
+    if model.use_hour and "z_hour" in out:
+        swapped = model.decode_from_parts(out, z_hour=out["z_hour"][perm])
+        # Hour swaps should preserve day profile after averaging over hours.
+        losses["loss_swap_hour_day_invariance"] = torch.mean(torch.abs(swapped.mean(dim=2) - base.mean(dim=2)))
+    if model.use_interaction and "z_interaction" in out:
+        swapped = model.decode_from_parts(out, z_interaction=out["z_interaction"][perm])
+        # Interaction swaps should have little additive main effect; emphasize cell-level deviations.
+        main_effect = swapped.mean(dim=1, keepdim=True) + swapped.mean(dim=2, keepdim=True) - swapped.mean(dim=(1, 2), keepdim=True)
+        losses["loss_swap_interaction_main_effect"] = torch.mean(torch.abs(main_effect - swapped.mean(dim=(1, 2), keepdim=True)))
+    return losses
+
+
 def run_epoch(model: nn.Module, loader: DataLoader, config: dict[str, Any], device: torch.device, optimizer, desc: str) -> dict[str, float]:
     training = optimizer is not None
     model.train(training)
@@ -122,6 +163,16 @@ def run_epoch(model: nn.Module, loader: DataLoader, config: dict[str, Any], devi
             optimizer.zero_grad(set_to_none=True)
         out = model(rb["x"], rb["mask"])
         losses = residual_loss(out, rb, config)
+        swap_losses = swap_regularization_loss(model, out, config)
+        if swap_losses:
+            total_swap = torch.tensor(0.0, device=losses["loss"].device)
+            weights = config.get("swap_regularization", {})
+            for key, value in swap_losses.items():
+                weight_key = key.replace("loss_swap_", "") + "_weight"
+                total_swap = total_swap + float(weights.get(weight_key, weights.get("weight", 0.0))) * value
+                losses[key] = value.detach()
+            losses["loss_swap"] = total_swap.detach()
+            losses["loss"] = losses["loss"] + total_swap
         if training:
             losses["loss"].backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), float(config["train"].get("grad_clip", 1.0)))
@@ -176,6 +227,45 @@ def residual_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
         metrics["high_residual_top10_baseline_mae"] = float(np.mean(np.abs(baseline[high] - sales[high])))
         metrics["high_residual_top10_corrected_mae"] = float(np.mean(np.abs(corrected[high] - sales[high])))
     return metrics
+
+
+@torch.no_grad()
+def evaluate_swap_diagnostics(model: nn.Module, loader: DataLoader, config: dict[str, Any], device: torch.device) -> dict[str, float]:
+    if not isinstance(model, ResidualMultiGrainAE):
+        return {}
+    model.eval()
+    totals: dict[str, float] = {}
+    count = 0
+    for batch in tqdm(loader, desc="swap diagnostics", unit="batch"):
+        batch = {key: value.to(device, non_blocking=True) for key, value in batch.items()}
+        rb = residual_batch(batch, config)
+        out = model(rb["x"], rb["mask"])
+        if out["residual_hat"].shape[0] <= 1:
+            continue
+        perm = _sample_derangement(out["residual_hat"].shape[0], out["residual_hat"].device)
+        base = out["residual_hat"]
+        batch_metrics: dict[str, torch.Tensor] = {}
+        if model.use_global and "z_global" in out:
+            swapped = model.decode_from_parts(out, z_global=out["z_global"][perm])
+            batch_metrics["swap_global_total_delta"] = torch.mean(torch.abs(swapped - base))
+            batch_metrics["swap_global_shape_delta"] = torch.mean(torch.abs(_center_by_mean(swapped, (1, 2)) - _center_by_mean(base, (1, 2))))
+        if model.use_day and "z_day" in out:
+            swapped = model.decode_from_parts(out, z_day=out["z_day"][perm])
+            batch_metrics["swap_day_total_delta"] = torch.mean(torch.abs(swapped - base))
+            batch_metrics["swap_day_hour_profile_delta"] = torch.mean(torch.abs(swapped.mean(dim=1) - base.mean(dim=1)))
+        if model.use_hour and "z_hour" in out:
+            swapped = model.decode_from_parts(out, z_hour=out["z_hour"][perm])
+            batch_metrics["swap_hour_total_delta"] = torch.mean(torch.abs(swapped - base))
+            batch_metrics["swap_hour_day_profile_delta"] = torch.mean(torch.abs(swapped.mean(dim=2) - base.mean(dim=2)))
+        if model.use_interaction and "z_interaction" in out:
+            swapped = model.decode_from_parts(out, z_interaction=out["z_interaction"][perm])
+            main_effect = swapped.mean(dim=1, keepdim=True) + swapped.mean(dim=2, keepdim=True) - swapped.mean(dim=(1, 2), keepdim=True)
+            batch_metrics["swap_interaction_total_delta"] = torch.mean(torch.abs(swapped - base))
+            batch_metrics["swap_interaction_main_effect_delta"] = torch.mean(torch.abs(main_effect - swapped.mean(dim=(1, 2), keepdim=True)))
+        for key, value in batch_metrics.items():
+            totals[key] = totals.get(key, 0.0) + float(value.detach())
+        count += 1
+    return {key: value / max(count, 1) for key, value in totals.items()}
 
 
 def save_residual_predictions(path: Path, arrays: dict[str, np.ndarray]) -> None:
@@ -265,6 +355,11 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     variant_config = dict(config)
     if "loss_overrides" in variant:
         variant_config["loss"] = {**config["loss"], **variant["loss_overrides"]}
+    if "swap_regularization_overrides" in variant:
+        variant_config["swap_regularization"] = {
+            **config.get("swap_regularization", {}),
+            **variant["swap_regularization_overrides"],
+        }
     name = variant["name"]
     out_dir = root_out / name
     logger = setup_run_logger(out_dir, name=f"residual.{name}")
@@ -315,6 +410,7 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     test_arrays = predict_residuals(model, test_loader, variant_config, device)
     metrics = residual_metrics(test_arrays)
     metrics.update(run_latent_probes(train_arrays, test_arrays, variant_config))
+    metrics.update(evaluate_swap_diagnostics(model, test_loader, variant_config, device))
     save_residual_predictions(out_dir / "residual_predictions.csv", test_arrays)
     save_latent_outputs(test_arrays, out_dir)
     write_json(out_dir / "metrics.json", metrics)

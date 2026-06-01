@@ -128,7 +128,7 @@ class ResidualMultiGrainAE(nn.Module):
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> dict[str, torch.Tensor]:
         encoded = self.encode(x, mask)
-        residual_hat = self.decoder(self._latent_grid(encoded)).squeeze(-1)
+        residual_hat = self.decode_from_encoded(encoded)
         out = {
             "residual_hat": residual_hat,
             "grid": encoded["grid"],
@@ -145,6 +145,33 @@ class ResidualMultiGrainAE(nn.Module):
         if self.use_interaction:
             out["z_interaction"] = encoded["z_interaction"]
         return out
+
+    def decode_from_encoded(self, encoded: dict[str, torch.Tensor]) -> torch.Tensor:
+        return self.decoder(self._latent_grid(encoded)).squeeze(-1)
+
+    def decode_from_parts(
+        self,
+        reference: dict[str, torch.Tensor],
+        z_global: torch.Tensor | None = None,
+        z_local: torch.Tensor | None = None,
+        z_day: torch.Tensor | None = None,
+        z_hour: torch.Tensor | None = None,
+        z_interaction: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        encoded = dict(reference)
+        if z_global is not None:
+            encoded["z_global"] = z_global
+        if z_local is not None:
+            encoded["z_local"] = z_local
+        if z_day is not None:
+            encoded["z_day"] = z_day
+        if z_hour is not None:
+            encoded["z_hour"] = z_hour
+        if z_interaction is not None:
+            encoded["z_interaction"] = z_interaction
+        if self.use_interaction and z_interaction is None and (z_day is not None or z_hour is not None):
+            encoded["z_interaction"] = self.interaction_encoder(encoded["z_day"], encoded["z_hour"])
+        return self.decode_from_encoded(encoded)
 
 
 def residual_decouple_penalty(out: dict[str, torch.Tensor]) -> torch.Tensor:
