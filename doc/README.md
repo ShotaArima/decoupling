@@ -14,3 +14,6 @@
 | EXP-010 | [EXP-008_to_EXP-012_followup_experiment_plan.md](EXP-008_to_EXP-012_followup_experiment_plan.md) | same-hour recent mean を residual baseline として組み込む |
 | EXP-011 | [EXP-008_to_EXP-012_followup_experiment_plan.md](EXP-008_to_EXP-012_followup_experiment_plan.md) | naive baseline からの残差を予測対象にする |
 | EXP-012 | [EXP-008_to_EXP-012_followup_experiment_plan.md](EXP-008_to_EXP-012_followup_experiment_plan.md) | weekday / holiday / discount / hour pattern 中心の probe 再設計 |
+| 2-Exp-1 | [2-Exp-1_residual_diagnostics_design.md](2-Exp-1_residual_diagnostics_design.md) | 基準成分 `b` と残差 `r = y - b` の構造診断 |
+| 2-Exp-2〜6 | [2-Exp-2_to_6_residual_representation_design.md](2-Exp-2_to_6_residual_representation_design.md) | 残差表現学習、再構成、probe、heatmap、`b + r_hat` 補正評価 |
+

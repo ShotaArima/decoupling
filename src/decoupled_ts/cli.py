@@ -14,6 +14,10 @@ def main() -> None:
     evaluate.add_argument("--checkpoint", default="runs/freshretailnet_glr/best.pt")
     retail = sub.add_parser("retail-experiment")
     retail.add_argument("--config", default="configs/retail_multigrain.json")
+    residual = sub.add_parser("residual-diagnostics")
+    residual.add_argument("--config", default="configs/2-Exp-1_residual_diagnostics_smoke.json")
+    residual_exp = sub.add_parser("residual-experiment")
+    residual_exp.add_argument("--config", default="configs/2-Exp-2_to_6_residual_smoke.json")
     same_hour = sub.add_parser("same-hour-analysis")
     same_hour.add_argument("--config", default="configs/EXP-008_same_hour_analysis_freshretailnet.json")
     args = parser.parse_args()
@@ -35,6 +39,14 @@ def main() -> None:
         from .retail_experiments import run_retail_experiments
 
         print(json.dumps(run_retail_experiments(args.config), indent=2))
+    elif args.cmd == "residual-diagnostics":
+        from .residual_diagnostics import run_residual_diagnostics
+
+        print(json.dumps(run_residual_diagnostics(args.config), indent=2))
+    elif args.cmd == "residual-experiment":
+        from .residual_experiments import run_residual_experiments
+
+        print(json.dumps(run_residual_experiments(args.config), indent=2))
     elif args.cmd == "same-hour-analysis":
         from .retail_analysis import run_same_hour_analysis
 
