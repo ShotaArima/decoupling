@@ -18,6 +18,8 @@ def main() -> None:
     residual.add_argument("--config", default="configs/2-Exp-1_residual_diagnostics_smoke.json")
     residual_exp = sub.add_parser("residual-experiment")
     residual_exp.add_argument("--config", default="configs/2-Exp-2_to_6_residual_smoke.json")
+    residual_sweep = sub.add_parser("residual-sweep")
+    residual_sweep.add_argument("--config", default="configs/2-Exp-9_multiseed_structured_residual_smoke.json")
     same_hour = sub.add_parser("same-hour-analysis")
     same_hour.add_argument("--config", default="configs/EXP-008_same_hour_analysis_freshretailnet.json")
     args = parser.parse_args()
@@ -47,6 +49,10 @@ def main() -> None:
         from .residual_experiments import run_residual_experiments
 
         print(json.dumps(run_residual_experiments(args.config), indent=2))
+    elif args.cmd == "residual-sweep":
+        from .residual_sweeps import run_residual_sweep
+
+        print(json.dumps(run_residual_sweep(args.config), indent=2))
     elif args.cmd == "same-hour-analysis":
         from .retail_analysis import run_same_hour_analysis
 

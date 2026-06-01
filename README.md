@@ -146,3 +146,13 @@ uv run decoupled-ts residual-experiment --config configs/2-Exp-8_structured_resi
 uv run decoupled-ts residual-diagnostics --config configs/2-Exp-8_structured_residual_diagnostics_synthetic.json
 uv run decoupled-ts residual-experiment --config configs/2-Exp-8_structured_residual_synthetic.json
 ```
+
+To compare the two main interaction variants across multiple seeds and a FreshRetailNet residual-structured subset:
+
+```bash
+uv run decoupled-ts residual-sweep --config configs/2-Exp-9_multiseed_structured_residual_smoke.json
+uv run decoupled-ts residual-sweep --config configs/2-Exp-9_multiseed_structured_residual_synthetic.json
+uv run decoupled-ts residual-sweep --config configs/2-Exp-9_freshretailnet_subset_interaction.json
+```
+
+The sweep runner writes per-seed runs plus `all_results.csv`, `aggregate.csv`, and `summary.json` under `sweep.output_dir`.
