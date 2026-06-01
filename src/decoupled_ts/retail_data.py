@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import DataLoader, Dataset, Subset, random_split
 
 from .data import FreshRetailNetSeries, infer_input_dim
 
@@ -196,6 +196,115 @@ class StructuredResidualRetailSeries(Dataset):
         return {key: value[idx] for key, value in self.tensors.items()}
 
 
+def _same_hour_recent_mean_np(sales: np.ndarray, observed: np.ndarray, recent_days: int) -> np.ndarray:
+    series_sum = (sales * observed).sum(axis=(1, 2), keepdims=True)
+    series_count = observed.sum(axis=(1, 2), keepdims=True)
+    fallback = np.divide(series_sum, np.clip(series_count, 1.0, None))
+    hour_sum = (sales * observed).sum(axis=1)
+    hour_count = observed.sum(axis=1)
+    hour_mean = np.divide(
+        hour_sum,
+        np.clip(hour_count, 1.0, None),
+        out=np.broadcast_to(fallback[:, 0, 0][:, None], hour_sum.shape).copy(),
+        where=hour_count > 0,
+    )
+    baseline = np.empty_like(sales, dtype=np.float32)
+    for day in range(sales.shape[1]):
+        start = max(0, day - recent_days)
+        if start == day:
+            baseline[:, day, :] = hour_mean
+            continue
+        window_sales = sales[:, start:day, :] * observed[:, start:day, :]
+        window_count = observed[:, start:day, :].sum(axis=1)
+        day_mean = np.divide(
+            window_sales.sum(axis=1),
+            np.clip(window_count, 1.0, None),
+            out=hour_mean.copy(),
+            where=window_count > 0,
+        )
+        baseline[:, day, :] = day_mean
+    return baseline
+
+
+def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
+    filter_cfg = cfg.get("subset_filter", {})
+    if not bool(filter_cfg.get("enabled", False)):
+        return dataset
+    loader = DataLoader(dataset, batch_size=int(filter_cfg.get("batch_size", 512)), shuffle=False)
+    rows = []
+    offset = 0
+    recent_days = int(cfg.get("recent_days", 7))
+    hours = int(cfg.get("hours", cfg.get("window_size", 24)))
+    for batch in loader:
+        x = batch["x"].numpy()
+        mask = batch["mask"].numpy()
+        sales = x[:, 0, :].reshape(x.shape[0], -1, hours)
+        observed = mask[:, 0, :].reshape(mask.shape[0], -1, hours)
+        observed_count = np.clip(observed.sum(axis=(1, 2)), 1.0, None)
+        observed_sales = sales * observed
+        mean_sales = observed_sales.sum(axis=(1, 2)) / observed_count
+        nonzero_rate = ((sales > 0.0) * observed).sum(axis=(1, 2)) / observed_count
+        observed_rate = observed.mean(axis=(1, 2))
+        residual = sales - _same_hour_recent_mean_np(sales, observed, recent_days)
+        residual_mean = (residual * observed).sum(axis=(1, 2), keepdims=True) / observed_count[:, None, None]
+        residual_std = np.sqrt((((residual - residual_mean) ** 2) * observed).sum(axis=(1, 2)) / observed_count)
+        for i in range(x.shape[0]):
+            rows.append(
+                {
+                    "index": offset + i,
+                    "mean_sales": float(mean_sales[i]),
+                    "nonzero_rate": float(nonzero_rate[i]),
+                    "observed_rate": float(observed_rate[i]),
+                    "stockout_rate": float(1.0 - observed_rate[i]),
+                    "residual_std": float(residual_std[i]),
+                }
+            )
+        offset += x.shape[0]
+    keep = []
+    for row in rows:
+        if row["mean_sales"] < float(filter_cfg.get("min_mean_sales", -np.inf)):
+            continue
+        if row["mean_sales"] > float(filter_cfg.get("max_mean_sales", np.inf)):
+            continue
+        if row["nonzero_rate"] < float(filter_cfg.get("min_nonzero_rate", -np.inf)):
+            continue
+        if row["observed_rate"] < float(filter_cfg.get("min_observed_rate", -np.inf)):
+            continue
+        if row["stockout_rate"] > float(filter_cfg.get("max_stockout_rate", np.inf)):
+            continue
+        if row["residual_std"] < float(filter_cfg.get("min_residual_std", -np.inf)):
+            continue
+        keep.append(row)
+    sort_key = str(filter_cfg.get("sort_by", "residual_std"))
+    if sort_key:
+        keep = sorted(keep, key=lambda row: row.get(sort_key, 0.0), reverse=bool(filter_cfg.get("descending", True)))
+    top_k = filter_cfg.get("top_k")
+    if top_k is not None:
+        keep = keep[: int(top_k)]
+    top_fraction = filter_cfg.get("top_fraction")
+    if top_fraction is not None:
+        keep = keep[: max(1, int(len(keep) * float(top_fraction)))]
+    if not keep:
+        raise RuntimeError(f"subset_filter removed all examples from dataset of size {len(dataset)}")
+    indices = [int(row["index"]) for row in keep]
+    return Subset(dataset, indices)
+
+
+def _maybe_filter_bundle(bundle: RetailDataBundle, config: dict[str, Any]) -> RetailDataBundle:
+    data_cfg = config["dataset"]
+    if not bool(data_cfg.get("subset_filter", {}).get("enabled", False)):
+        return bundle
+    return RetailDataBundle(
+        train=_filter_dataset(bundle.train, data_cfg),
+        valid=_filter_dataset(bundle.valid, data_cfg),
+        test=_filter_dataset(bundle.test, data_cfg),
+        input_dim=bundle.input_dim,
+        days=bundle.days,
+        hours=bundle.hours,
+        forecast_days=bundle.forecast_days,
+    )
+
+
 def build_retail_data(config: dict[str, Any]) -> RetailDataBundle:
     data_cfg = config["dataset"]
     if data_cfg["name"] in {"synthetic_retail", "structured_residual_retail"}:
@@ -218,7 +327,7 @@ def build_retail_data(config: dict[str, Any]) -> RetailDataBundle:
         train_size = len(full) - valid_size - test_size
         generator = torch.Generator().manual_seed(int(config["seed"]))
         train, valid, test = random_split(full, [train_size, valid_size, test_size], generator=generator)
-        return RetailDataBundle(
+        return _maybe_filter_bundle(RetailDataBundle(
             train=train,
             valid=valid,
             test=test,
@@ -226,7 +335,7 @@ def build_retail_data(config: dict[str, Any]) -> RetailDataBundle:
             days=int(data_cfg["days"]),
             hours=int(data_cfg.get("hours", 24)),
             forecast_days=int(data_cfg["forecast_days"]),
-        )
+        ), config)
 
     if data_cfg["name"] == "freshretailnet":
         merged = dict(data_cfg)
@@ -235,7 +344,7 @@ def build_retail_data(config: dict[str, Any]) -> RetailDataBundle:
         train = FreshRetailNetSeries.from_config(merged, merged["train_split"], max_series=merged["max_train_series"])
         valid = FreshRetailNetSeries.from_config(merged, merged["eval_split"], max_series=merged["max_eval_series"])
         test = valid
-        return RetailDataBundle(
+        return _maybe_filter_bundle(RetailDataBundle(
             train=train,
             valid=valid,
             test=test,
@@ -243,6 +352,6 @@ def build_retail_data(config: dict[str, Any]) -> RetailDataBundle:
             days=int(data_cfg["history_days"]),
             hours=24,
             forecast_days=int(data_cfg["forecast_days"]),
-        )
+        ), config)
 
     raise ValueError(f"unknown dataset name: {data_cfg['name']}")

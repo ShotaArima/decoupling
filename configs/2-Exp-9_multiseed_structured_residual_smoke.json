@@ -1,0 +1,64 @@
+{
+  "seed": 17,
+  "sweep": {
+    "seeds": [17, 23],
+    "output_dir": "runs/2-Exp-9_multiseed_structured_residual_smoke"
+  },
+  "dataset": {
+    "name": "structured_residual_retail",
+    "n_series": 160,
+    "days": 21,
+    "hours": 24,
+    "forecast_days": 2,
+    "recent_days": 7,
+    "valid_ratio": 0.15,
+    "test_ratio": 0.15,
+    "noise_std": 0.2,
+    "stockout_rate": 0.04,
+    "residual_scale": 1.0
+  },
+  "model": {
+    "hidden_dim": 48,
+    "global_dim": 5,
+    "local_dim": 5,
+    "day_dim": 5,
+    "hour_dim": 5,
+    "interaction_dim": 4,
+    "dropout": 0.1
+  },
+  "loss": {
+    "decouple_weight": 0.001
+  },
+  "residual": {
+    "baseline_method": "same_hour_recent_mean"
+  },
+  "swap_regularization": {
+    "enabled": false,
+    "weight": 0.05
+  },
+  "train": {
+    "batch_size": 32,
+    "epochs": 2,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "num_workers": 0,
+    "pin_memory": false,
+    "selection_metric": "valid_loss_residual_reconstruction",
+    "device": "auto",
+    "output_dir": "runs/2-Exp-9_multiseed_structured_residual_smoke/base"
+  },
+  "experiments": [
+    {"name": "interaction_no_swap", "type": "multigrain_ae", "use_global": true, "use_local": false, "use_day": true, "use_hour": true, "use_interaction": true},
+    {
+      "name": "interaction_with_swap",
+      "type": "multigrain_ae",
+      "use_global": true,
+      "use_local": false,
+      "use_day": true,
+      "use_hour": true,
+      "use_interaction": true,
+      "swap_regularization_overrides": {"enabled": true, "weight": 0.05}
+    }
+  ]
+}
