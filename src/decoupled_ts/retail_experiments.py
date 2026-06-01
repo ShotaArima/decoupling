@@ -10,7 +10,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
+from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import accuracy_score
 
 from .data import load_config
@@ -54,6 +54,7 @@ def make_model(config: dict[str, Any], variant: dict[str, Any], input_dim: int, 
             use_hour=bool(variant.get("use_hour", True)),
             use_interaction=bool(variant.get("use_interaction", False)),
             forecast_days=int(config["dataset"]["forecast_days"]),
+            forecast_activation=str(variant.get("forecast_activation", model_cfg.get("forecast_activation", "softplus"))),
             dropout=float(model_cfg.get("dropout", 0.1)),
         )
     raise ValueError(f"unknown variant type: {variant['type']}")
@@ -61,7 +62,10 @@ def make_model(config: dict[str, Any], variant: dict[str, Any], input_dim: int, 
 
 def loss_for_batch(model: nn.Module, batch: dict[str, torch.Tensor], out: dict[str, torch.Tensor], config: dict) -> dict[str, torch.Tensor]:
     target = batch["target"]
-    forecast_loss = nn.functional.huber_loss(out["prediction"], target, delta=float(config["train"].get("huber_delta", 25.0)))
+    pred = final_prediction(out, batch, config)
+    loss_target = training_target(batch, config)
+    loss_pred = out["prediction"] if prediction_mode(config) == "residual_target" else pred
+    forecast_loss = nn.functional.huber_loss(loss_pred, loss_target, delta=float(config["train"].get("huber_delta", 25.0)))
     total = forecast_loss
     values = {"loss_forecast": forecast_loss.detach()}
     if "reconstruction" in out:
@@ -87,6 +91,37 @@ def loss_for_batch(model: nn.Module, batch: dict[str, torch.Tensor], out: dict[s
         )
     values["loss"] = total
     return values
+
+
+def prediction_mode(config: dict) -> str:
+    return str(config.get("prediction", {}).get("mode", "direct"))
+
+
+def residual_baseline(batch: dict[str, torch.Tensor], config: dict) -> torch.Tensor:
+    pred_cfg = config.get("prediction", {})
+    method = str(pred_cfg.get("baseline_method", config.get("dataset", {}).get("baseline_method", "naive_same_hour_recent_mean")))
+    recent_days = int(pred_cfg.get("recent_days", config.get("dataset", {}).get("recent_days", 7)))
+    forecast_days = int(config["dataset"]["forecast_days"])
+    return predict_naive_batch(batch, method, forecast_days, recent_days).to(batch["target"].device)
+
+
+def final_prediction(out: dict[str, torch.Tensor], batch: dict[str, torch.Tensor], config: dict) -> torch.Tensor:
+    mode = prediction_mode(config)
+    if mode == "direct":
+        pred = out["prediction"]
+    elif mode in {"residual_additive", "residual_target"}:
+        pred = residual_baseline(batch, config) + out["prediction"]
+    else:
+        raise ValueError(f"unknown prediction mode: {mode}")
+    if bool(config.get("prediction", {}).get("nonnegative", True)):
+        pred = pred.clamp_min(0.0)
+    return pred
+
+
+def training_target(batch: dict[str, torch.Tensor], config: dict) -> torch.Tensor:
+    if prediction_mode(config) == "residual_target":
+        return batch["target"] - residual_baseline(batch, config)
+    return batch["target"]
 
 
 def reconstruction_weights(mask: torch.Tensor, config: dict) -> torch.Tensor:
@@ -131,30 +166,32 @@ def run_epoch(
 
 
 @torch.no_grad()
-def predict_model(model: nn.Module, loader: DataLoader, forecast_days: int, device: torch.device) -> tuple[np.ndarray, np.ndarray]:
+def predict_model(model: nn.Module, loader: DataLoader, forecast_days: int, device: torch.device, config: dict) -> tuple[np.ndarray, np.ndarray]:
     model.eval()
     preds, trues = [], []
     for batch in tqdm(loader, desc="test", unit="batch"):
         x = batch["x"].to(device, non_blocking=True)
         mask = batch["mask"].to(device, non_blocking=True)
         if hasattr(model, "predict_future_sum"):
-            pred = model.predict_future_sum(x, mask, forecast_days=forecast_days)
+            raw_pred = model.predict_future_sum(x, mask, forecast_days=forecast_days)
+            pred = final_prediction({"prediction": raw_pred}, batch | {"x": x, "mask": mask, "target": batch["target"].to(device)}, config)
         else:
-            pred = model(x, mask)["prediction"]
+            out = model(x, mask)
+            pred = final_prediction(out, batch | {"x": x, "mask": mask, "target": batch["target"].to(device)}, config)
         preds.append(pred.detach().cpu().numpy())
         trues.append(batch["target"].numpy())
     return np.concatenate(trues), np.concatenate(preds)
 
 
 @torch.no_grad()
-def evaluate_model(model: nn.Module, loader: DataLoader, forecast_days: int, device: torch.device) -> dict[str, float]:
-    y_true, y_pred = predict_model(model, loader, forecast_days, device)
+def evaluate_model(model: nn.Module, loader: DataLoader, forecast_days: int, device: torch.device, config: dict) -> dict[str, float]:
+    y_true, y_pred = predict_model(model, loader, forecast_days, device, config)
     return regression_metrics(y_true, y_pred)
 
 
 @torch.no_grad()
-def validation_prediction_metrics(model: nn.Module, loader: DataLoader, forecast_days: int, device: torch.device) -> dict[str, float]:
-    y_true, y_pred = predict_model(model, loader, forecast_days, device)
+def validation_prediction_metrics(model: nn.Module, loader: DataLoader, forecast_days: int, device: torch.device, config: dict) -> dict[str, float]:
+    y_true, y_pred = predict_model(model, loader, forecast_days, device, config)
     return {f"valid_{key}": value for key, value in regression_metrics(y_true, y_pred).items()}
 
 
@@ -437,7 +474,7 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
         train_losses = run_epoch(model, train_loader, variant_config, device, optimizer, f"{name} train {epoch}")
         with torch.inference_mode():
             valid_losses = run_epoch(model, valid_loader, variant_config, device, None, f"{name} valid {epoch}")
-            valid_pred_metrics = validation_prediction_metrics(model, valid_loader, bundle.forecast_days, device)
+            valid_pred_metrics = validation_prediction_metrics(model, valid_loader, bundle.forecast_days, device, variant_config)
         row = {"epoch": epoch, **{f"train_{k}": v for k, v in train_losses.items()}, **{f"valid_{k}": v for k, v in valid_losses.items()}}
         row.update(valid_pred_metrics)
         append_jsonl(out_dir / "history.jsonl", row)
@@ -466,7 +503,7 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
 
     checkpoint = torch.load(best_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"])
-    y_true, y_pred = predict_model(model, test_loader, bundle.forecast_days, device)
+    y_true, y_pred = predict_model(model, test_loader, bundle.forecast_days, device, variant_config)
     write_predictions_csv(out_dir / "predictions.csv", y_true, y_pred)
     metrics = regression_metrics(y_true, y_pred)
     if hasattr(model, "encode"):
