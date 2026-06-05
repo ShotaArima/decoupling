@@ -19,3 +19,4 @@
 | 2-Exp-7 | [2-Exp-7_swap_regularization_design.md](2-Exp-7_swap_regularization_design.md) | 反実仮想 swap 正則化あり/なしの分離性比較 |
 | 2-Exp-8 | [2-Exp-8_structured_residual_synthetic_design.md](2-Exp-8_structured_residual_synthetic_design.md) | 真の residual 構造を持つ synthetic で仮説成立条件を検証 |
 | 2-Exp-9 | [2-Exp-9_multiseed_and_subset_design.md](2-Exp-9_multiseed_and_subset_design.md) | `interaction_no_swap` / `interaction_with_swap` の複数 seed と FreshRetailNet subset 評価 |
+| Proposal | [proposal/README.md](proposal/README.md) | 残差直交分解に基づく論文化方針、数理保証、実験計画 |
