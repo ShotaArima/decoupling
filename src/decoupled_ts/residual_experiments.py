@@ -16,7 +16,7 @@ from .data import load_config
 from .experiment_logging import append_jsonl, setup_run_logger, write_json
 from .metrics import regression_metrics
 from .residual_diagnostics import _labels_from_grid
-from .residual_models import ResidualFlattenAE, ResidualMultiGrainAE, residual_decouple_penalty
+from .residual_models import OutputDecompositionResidualModel, ResidualFlattenAE, ResidualMultiGrainAE, residual_decouple_penalty
 from .retail_data import build_retail_data
 from .retail_models import flatten_to_grid
 from .train import optimize_torch_runtime, resolve_device
@@ -49,10 +49,15 @@ def residual_batch(batch: dict[str, torch.Tensor], config: dict[str, Any]) -> di
     sales = grid[..., 0]
     observed = mask_grid[..., 0]
     method = str(config.get("residual", {}).get("baseline_method", "same_hour_recent_mean"))
-    if method != "same_hour_recent_mean":
+    target = str(config.get("residual", {}).get("target", "baseline_residual"))
+    if target == "true_residual" and "true_residual" in batch:
+        residual = batch["true_residual"].to(sales.device)
+        baseline = sales - residual
+    elif method == "same_hour_recent_mean":
+        baseline = _same_hour_recent_mean_torch(sales, observed, int(config["dataset"].get("recent_days", 7)))
+        residual = sales - baseline
+    else:
         raise ValueError("residual experiments currently support baseline_method='same_hour_recent_mean'")
-    baseline = _same_hour_recent_mean_torch(sales, observed, int(config["dataset"].get("recent_days", 7)))
-    residual = sales - baseline
     x_residual = batch["x"].clone()
     x_residual[:, 0, :] = residual.reshape(residual.shape[0], -1)
     return {
@@ -93,7 +98,35 @@ def make_residual_model(config: dict[str, Any], variant: dict[str, Any], input_d
             use_interaction=bool(variant.get("use_interaction", False)),
             dropout=float(model_cfg.get("dropout", 0.1)),
         )
+    if variant["type"] == "output_decomposition":
+        return OutputDecompositionResidualModel(
+            input_dim=input_dim,
+            days=days,
+            hours=hours,
+            hidden_dim=int(model_cfg["hidden_dim"]),
+            global_dim=int(model_cfg["global_dim"]),
+            day_dim=int(model_cfg["day_dim"]),
+            hour_dim=int(model_cfg["hour_dim"]),
+            interaction_dim=int(model_cfg["interaction_dim"]),
+            dropout=float(model_cfg.get("dropout", 0.1)),
+            center_components=bool(variant.get("center_components", True)),
+            use_interaction=bool(variant.get("use_interaction", True)),
+        )
     raise ValueError(f"unknown residual variant type: {variant['type']}")
+
+
+def component_constraint_loss(out: dict[str, torch.Tensor]) -> torch.Tensor:
+    penalties = []
+    if "day_component" in out:
+        penalties.append(torch.mean(torch.square(out["day_component"].mean(dim=1))))
+    if "hour_component" in out:
+        penalties.append(torch.mean(torch.square(out["hour_component"].mean(dim=2))))
+    if "interaction_component" in out:
+        penalties.append(torch.mean(torch.square(out["interaction_component"].mean(dim=1))))
+        penalties.append(torch.mean(torch.square(out["interaction_component"].mean(dim=2))))
+    if not penalties:
+        return torch.tensor(0.0, device=out["residual_hat"].device)
+    return sum(penalties)
 
 
 def residual_loss(out: dict[str, torch.Tensor], rb: dict[str, torch.Tensor], config: dict[str, Any]) -> dict[str, torch.Tensor]:
@@ -106,6 +139,10 @@ def residual_loss(out: dict[str, torch.Tensor], rb: dict[str, torch.Tensor], con
         decouple = residual_decouple_penalty(out)
         total = total + float(config["loss"].get("decouple_weight", 0.0)) * decouple
         values["loss_decouple"] = decouple.detach()
+    if any(key in out for key in ("day_component", "hour_component", "interaction_component")):
+        component_penalty = component_constraint_loss(out)
+        total = total + float(config["loss"].get("component_constraint_weight", 0.0)) * component_penalty
+        values["loss_component_constraint"] = component_penalty.detach()
     values["loss"] = total
     return values
 
@@ -187,7 +224,18 @@ def run_epoch(model: nn.Module, loader: DataLoader, config: dict[str, Any], devi
 def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, Any], device: torch.device) -> dict[str, np.ndarray]:
     model.eval()
     parts = {"sales": [], "baseline": [], "residual": [], "residual_hat": [], "observed": [], "grid": [], "subgroup": []}
-    latents: dict[str, list[np.ndarray]] = {"z_global": [], "z_local": [], "z_day": [], "z_hour": []}
+    latents: dict[str, list[np.ndarray]] = {"z_global": [], "z_local": [], "z_day": [], "z_hour": [], "z_interaction": []}
+    components: dict[str, list[np.ndarray]] = {
+        "global_component": [],
+        "day_component": [],
+        "hour_component": [],
+        "interaction_component": [],
+        "true_global": [],
+        "true_day": [],
+        "true_hour": [],
+        "true_interaction": [],
+        "true_residual": [],
+    }
     for batch in tqdm(loader, desc="residual test", unit="batch"):
         batch_dev = {key: value.to(device, non_blocking=True) for key, value in batch.items()}
         rb = residual_batch(batch_dev, config)
@@ -200,8 +248,15 @@ def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, An
         for key in latents:
             if key in out:
                 latents[key].append(out[key].detach().cpu().numpy())
+        for key in ("global_component", "day_component", "hour_component", "interaction_component"):
+            if key in out:
+                components[key].append(out[key].detach().cpu().numpy())
+        for key in ("true_global", "true_day", "true_hour", "true_interaction", "true_residual"):
+            if key in batch:
+                components[key].append(batch[key].numpy())
     result = {key: np.concatenate(value, axis=0) for key, value in parts.items()}
     result.update({key: np.concatenate(value, axis=0) for key, value in latents.items() if value})
+    result.update({key: np.concatenate(value, axis=0) for key, value in components.items() if value})
     return result
 
 
@@ -226,6 +281,65 @@ def residual_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
     if high.any():
         metrics["high_residual_top10_baseline_mae"] = float(np.mean(np.abs(baseline[high] - sales[high])))
         metrics["high_residual_top10_corrected_mae"] = float(np.mean(np.abs(corrected[high] - sales[high])))
+    return metrics
+
+
+def _corr(a: np.ndarray, b: np.ndarray) -> float:
+    x = a.reshape(-1)
+    y = b.reshape(-1)
+    if x.size < 2 or float(np.std(x)) <= 1e-8 or float(np.std(y)) <= 1e-8:
+        return 0.0
+    return float(np.corrcoef(x, y)[0, 1])
+
+
+def component_recovery_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
+    pairs = {
+        "global": ("true_global", "global_component"),
+        "day": ("true_day", "day_component"),
+        "hour": ("true_hour", "hour_component"),
+        "interaction": ("true_interaction", "interaction_component"),
+    }
+    metrics: dict[str, float] = {}
+    keep = arrays["observed"] > 0
+    for name, (true_key, pred_key) in pairs.items():
+        if true_key not in arrays or pred_key not in arrays:
+            continue
+        true = arrays[true_key][keep]
+        pred = arrays[pred_key][keep]
+        metrics[f"component_{name}_mae"] = float(np.mean(np.abs(pred - true)))
+        metrics[f"component_{name}_rmse"] = float(np.sqrt(np.mean(np.square(pred - true))))
+        metrics[f"component_{name}_corr"] = _corr(arrays[true_key][keep], arrays[pred_key][keep])
+    if "true_residual" in arrays:
+        true = arrays["true_residual"][keep]
+        pred = arrays["residual_hat"][keep]
+        metrics["component_total_true_residual_mae"] = float(np.mean(np.abs(pred - true)))
+        metrics["component_total_true_residual_rmse"] = float(np.sqrt(np.mean(np.square(pred - true))))
+    if all(key in arrays for key in ("day_component", "hour_component", "interaction_component")):
+        metrics["component_day_mean_abs"] = float(np.mean(np.abs(arrays["day_component"].mean(axis=1))))
+        metrics["component_hour_mean_abs"] = float(np.mean(np.abs(arrays["hour_component"].mean(axis=2))))
+        metrics["component_interaction_day_mean_abs"] = float(np.mean(np.abs(arrays["interaction_component"].mean(axis=1))))
+        metrics["component_interaction_hour_mean_abs"] = float(np.mean(np.abs(arrays["interaction_component"].mean(axis=2))))
+    return metrics
+
+
+def component_ablation_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
+    if not all(key in arrays for key in ("global_component", "day_component", "hour_component", "interaction_component")):
+        return {}
+    keep = arrays["observed"] > 0
+    target = arrays["true_residual"] if "true_residual" in arrays else arrays["residual"]
+    full = arrays["residual_hat"]
+    full_mae = float(np.mean(np.abs(full[keep] - target[keep])))
+    metrics = {"component_ablation_full_mae": full_mae}
+    for name, key in (
+        ("global", "global_component"),
+        ("day", "day_component"),
+        ("hour", "hour_component"),
+        ("interaction", "interaction_component"),
+    ):
+        pred = full - arrays[key]
+        mae = float(np.mean(np.abs(pred[keep] - target[keep])))
+        metrics[f"component_ablation_without_{name}_mae"] = mae
+        metrics[f"component_ablation_without_{name}_mae_delta"] = mae - full_mae
     return metrics
 
 
@@ -340,7 +454,23 @@ def run_latent_probes(train_arrays: dict[str, np.ndarray], test_arrays: dict[str
 
 
 def save_latent_outputs(arrays: dict[str, np.ndarray], out_dir: Path) -> None:
-    for key in ("z_global", "z_local", "z_day", "z_hour", "subgroup"):
+    for key in (
+        "z_global",
+        "z_local",
+        "z_day",
+        "z_hour",
+        "z_interaction",
+        "global_component",
+        "day_component",
+        "hour_component",
+        "interaction_component",
+        "true_global",
+        "true_day",
+        "true_hour",
+        "true_interaction",
+        "true_residual",
+        "subgroup",
+    ):
         if key in arrays:
             np.save(out_dir / f"{key}.npy", arrays[key])
     if "z_hour" in arrays:
@@ -368,6 +498,16 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
         "z_local.npy",
         "z_day.npy",
         "z_hour.npy",
+        "z_interaction.npy",
+        "global_component.npy",
+        "day_component.npy",
+        "hour_component.npy",
+        "interaction_component.npy",
+        "true_global.npy",
+        "true_day.npy",
+        "true_hour.npy",
+        "true_interaction.npy",
+        "true_residual.npy",
         "subgroup.npy",
         "z_hour_heatmap.csv",
         "residual_predictions.csv",
@@ -409,6 +549,8 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     train_arrays = predict_residuals(model, train_loader, variant_config, device)
     test_arrays = predict_residuals(model, test_loader, variant_config, device)
     metrics = residual_metrics(test_arrays)
+    metrics.update(component_recovery_metrics(test_arrays))
+    metrics.update(component_ablation_metrics(test_arrays))
     metrics.update(run_latent_probes(train_arrays, test_arrays, variant_config))
     metrics.update(evaluate_swap_diagnostics(model, test_loader, variant_config, device))
     save_residual_predictions(out_dir / "residual_predictions.csv", test_arrays)

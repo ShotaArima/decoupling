@@ -196,6 +196,131 @@ class StructuredResidualRetailSeries(Dataset):
         return {key: value[idx] for key, value in self.tensors.items()}
 
 
+class ComponentResidualRetailSeries(Dataset):
+    """Synthetic residual data with stored global/day/hour/interaction components."""
+
+    def __init__(
+        self,
+        n_series: int,
+        days: int,
+        hours: int,
+        forecast_days: int,
+        seed: int,
+        noise_std: float = 0.1,
+        stockout_rate: float = 0.03,
+        global_scale: float = 0.5,
+        day_scale: float = 0.7,
+        hour_scale: float = 0.8,
+        interaction_scale: float = 0.6,
+    ):
+        rng = np.random.default_rng(seed)
+        xs, masks, targets, subgroups = [], [], [], []
+        true_baseline, true_global, true_day, true_hour, true_interaction, true_residual = [], [], [], [], [], []
+        hour_grid = np.arange(hours, dtype=np.float32)
+        hour_sin = np.sin(2 * np.pi * hour_grid / hours)
+        hour_cos = np.cos(2 * np.pi * hour_grid / hours)
+        weekday_effects = np.array([-0.35, -0.15, 0.05, 0.12, 0.25, 0.42, 0.30], dtype=np.float32)
+        peaks = np.array([7, 12, 18, 21])
+        total_days = days + forecast_days
+
+        for _ in range(n_series):
+            subgroup = int(rng.integers(0, 4))
+            base_level = rng.uniform(8.0, 18.0) + 1.0 * subgroup
+            baseline_amp = rng.uniform(1.5, 4.0)
+            baseline_peak = float(peaks[subgroup])
+            g_scalar = global_scale * (rng.normal(0.0, 0.7) + (subgroup - 1.5) * 0.25)
+            raw_hour = np.sin(2 * np.pi * (hour_grid - peaks[subgroup]) / hours).astype(np.float32)
+            raw_hour += 0.65 * np.exp(-0.5 * ((hour_grid - peaks[subgroup]) / 2.5) ** 2).astype(np.float32)
+            hour_component = hour_scale * (raw_hour - raw_hour.mean())
+            promo_shape = np.exp(-0.5 * ((hour_grid - 13.0) / 2.2) ** 2).astype(np.float32)
+            promo_shape = promo_shape - promo_shape.mean()
+            all_sales, all_features, all_masks = [], [], []
+            all_baseline, all_g, all_day, all_hour, all_interaction, all_residual = [], [], [], [], [], []
+            day_values = []
+            interaction_values = []
+
+            for d in range(total_days):
+                weekday = d % 7
+                holiday = 1.0 if weekday in (5, 6) else 0.0
+                discount = float(rng.binomial(1, 0.18 + 0.10 * holiday)) * float(rng.uniform(0.08, 0.38))
+                weather = float(rng.normal(0.0, 1.0))
+                baseline = base_level + baseline_amp * (1.0 + np.cos(2 * np.pi * (hour_grid - baseline_peak) / hours))
+                day_value = day_scale * (weekday_effects[weekday] + 1.5 * discount + 0.25 * holiday - 0.08 * max(weather, 0.0))
+                interaction = interaction_scale * (2.8 * discount + 0.35 * holiday) * promo_shape
+                day_values.append(day_value)
+                interaction_values.append(interaction)
+                all_baseline.append(baseline.astype(np.float32))
+                all_g.append(np.full(hours, g_scalar, dtype=np.float32))
+                all_day.append(np.full(hours, day_value, dtype=np.float32))
+                all_hour.append(hour_component.astype(np.float32))
+                all_interaction.append(interaction.astype(np.float32))
+
+                residual = g_scalar + day_value + hour_component + interaction
+                sales = np.maximum(baseline + residual + rng.normal(0.0, noise_std, size=hours), 0.05).astype(np.float32)
+                stockout_prob = stockout_rate + 0.04 * (sales > np.quantile(sales, 0.80))
+                stockout = rng.binomial(1, np.clip(stockout_prob, 0.0, 0.35)).astype(np.float32)
+                observed_sales = sales.copy()
+                observed_sales[stockout == 1.0] *= rng.uniform(0.0, 0.25)
+                features = np.stack(
+                    [
+                        observed_sales,
+                        stockout,
+                        np.full(hours, discount, dtype=np.float32),
+                        np.full(hours, holiday, dtype=np.float32),
+                        np.full(hours, weather, dtype=np.float32),
+                        hour_sin,
+                        hour_cos,
+                        np.full(hours, np.sin(2 * np.pi * weekday / 7), dtype=np.float32),
+                        np.full(hours, np.cos(2 * np.pi * weekday / 7), dtype=np.float32),
+                        np.full(hours, subgroup / 3.0, dtype=np.float32),
+                    ],
+                    axis=0,
+                )
+                mask = np.ones_like(features, dtype=np.float32)
+                mask[0] = 1.0 - stockout
+                all_sales.append(sales)
+                all_features.append(features)
+                all_masks.append(mask)
+
+            day_center = float(np.mean(day_values[:days]))
+            day_grids = [row - day_center for row in all_day[:days]]
+            interaction_grid = np.stack(all_interaction[:days]).astype(np.float32)
+            interaction_grid = interaction_grid - interaction_grid.mean(axis=0, keepdims=True)
+            interaction_grid = interaction_grid - interaction_grid.mean(axis=1, keepdims=True)
+            residual_grid = np.stack(all_g[:days]) + np.stack(day_grids) + np.stack(all_hour[:days]) + interaction_grid
+
+            xs.append(np.concatenate(all_features[:days], axis=1))
+            masks.append(np.concatenate(all_masks[:days], axis=1))
+            targets.append(float(np.stack(all_sales[days:], axis=0).sum(dtype=np.float32)))
+            subgroups.append(subgroup)
+            true_baseline.append(np.stack(all_baseline[:days]).astype(np.float32))
+            true_global.append(np.stack(all_g[:days]).astype(np.float32))
+            true_day.append(np.stack(day_grids).astype(np.float32))
+            true_hour.append(np.stack(all_hour[:days]).astype(np.float32))
+            true_interaction.append(interaction_grid.astype(np.float32))
+            true_residual.append(residual_grid.astype(np.float32))
+
+        self.tensors = {
+            "x": torch.from_numpy(np.stack(xs).astype(np.float32)),
+            "mask": torch.from_numpy(np.stack(masks).astype(np.float32)),
+            "target": torch.tensor(targets, dtype=torch.float32),
+            "subgroup": torch.tensor(subgroups, dtype=torch.long),
+            "static_ids": torch.tensor(subgroups, dtype=torch.long)[:, None],
+            "true_baseline": torch.from_numpy(np.stack(true_baseline).astype(np.float32)),
+            "true_global": torch.from_numpy(np.stack(true_global).astype(np.float32)),
+            "true_day": torch.from_numpy(np.stack(true_day).astype(np.float32)),
+            "true_hour": torch.from_numpy(np.stack(true_hour).astype(np.float32)),
+            "true_interaction": torch.from_numpy(np.stack(true_interaction).astype(np.float32)),
+            "true_residual": torch.from_numpy(np.stack(true_residual).astype(np.float32)),
+        }
+
+    def __len__(self) -> int:
+        return int(self.tensors["x"].shape[0])
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        return {key: value[idx] for key, value in self.tensors.items()}
+
+
 def _same_hour_recent_mean_np(sales: np.ndarray, observed: np.ndarray, recent_days: int) -> np.ndarray:
     series_sum = (sales * observed).sum(axis=(1, 2), keepdims=True)
     series_count = observed.sum(axis=(1, 2), keepdims=True)
@@ -307,11 +432,25 @@ def _maybe_filter_bundle(bundle: RetailDataBundle, config: dict[str, Any]) -> Re
 
 def build_retail_data(config: dict[str, Any]) -> RetailDataBundle:
     data_cfg = config["dataset"]
-    if data_cfg["name"] in {"synthetic_retail", "structured_residual_retail"}:
-        dataset_cls = SyntheticRetailSeries if data_cfg["name"] == "synthetic_retail" else StructuredResidualRetailSeries
+    if data_cfg["name"] in {"synthetic_retail", "structured_residual_retail", "component_residual_retail"}:
+        dataset_map = {
+            "synthetic_retail": SyntheticRetailSeries,
+            "structured_residual_retail": StructuredResidualRetailSeries,
+            "component_residual_retail": ComponentResidualRetailSeries,
+        }
+        dataset_cls = dataset_map[data_cfg["name"]]
         kwargs = {}
         if data_cfg["name"] == "structured_residual_retail":
             kwargs["residual_scale"] = float(data_cfg.get("residual_scale", 1.0))
+        if data_cfg["name"] == "component_residual_retail":
+            kwargs.update(
+                {
+                    "global_scale": float(data_cfg.get("global_scale", 0.5)),
+                    "day_scale": float(data_cfg.get("day_scale", 0.7)),
+                    "hour_scale": float(data_cfg.get("hour_scale", 0.8)),
+                    "interaction_scale": float(data_cfg.get("interaction_scale", 0.6)),
+                }
+            )
         full = dataset_cls(
             n_series=int(data_cfg["n_series"]),
             days=int(data_cfg["days"]),
