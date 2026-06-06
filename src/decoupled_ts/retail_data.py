@@ -215,7 +215,7 @@ class ComponentResidualRetailSeries(Dataset):
     ):
         rng = np.random.default_rng(seed)
         xs, masks, targets, subgroups = [], [], [], []
-        true_baseline, true_global, true_day, true_hour, true_interaction, true_residual = [], [], [], [], [], []
+        true_baseline, true_global, true_day, true_hour, true_interaction, true_residual, noisy_true_residual = [], [], [], [], [], [], []
         hour_grid = np.arange(hours, dtype=np.float32)
         hour_sin = np.sin(2 * np.pi * hour_grid / hours)
         hour_cos = np.cos(2 * np.pi * hour_grid / hours)
@@ -288,6 +288,7 @@ class ComponentResidualRetailSeries(Dataset):
             interaction_grid = interaction_grid - interaction_grid.mean(axis=0, keepdims=True)
             interaction_grid = interaction_grid - interaction_grid.mean(axis=1, keepdims=True)
             residual_grid = np.stack(all_g[:days]) + np.stack(day_grids) + np.stack(all_hour[:days]) + interaction_grid
+            noisy_residual_grid = residual_grid + rng.normal(0.0, noise_std, size=residual_grid.shape).astype(np.float32)
 
             xs.append(np.concatenate(all_features[:days], axis=1))
             masks.append(np.concatenate(all_masks[:days], axis=1))
@@ -299,6 +300,7 @@ class ComponentResidualRetailSeries(Dataset):
             true_hour.append(np.stack(all_hour[:days]).astype(np.float32))
             true_interaction.append(interaction_grid.astype(np.float32))
             true_residual.append(residual_grid.astype(np.float32))
+            noisy_true_residual.append(noisy_residual_grid.astype(np.float32))
 
         self.tensors = {
             "x": torch.from_numpy(np.stack(xs).astype(np.float32)),
@@ -312,6 +314,7 @@ class ComponentResidualRetailSeries(Dataset):
             "true_hour": torch.from_numpy(np.stack(true_hour).astype(np.float32)),
             "true_interaction": torch.from_numpy(np.stack(true_interaction).astype(np.float32)),
             "true_residual": torch.from_numpy(np.stack(true_residual).astype(np.float32)),
+            "noisy_true_residual": torch.from_numpy(np.stack(noisy_true_residual).astype(np.float32)),
         }
 
     def __len__(self) -> int:
@@ -373,6 +376,25 @@ def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
         residual = sales - _same_hour_recent_mean_np(sales, observed, recent_days)
         residual_mean = (residual * observed).sum(axis=(1, 2), keepdims=True) / observed_count[:, None, None]
         residual_std = np.sqrt((((residual - residual_mean) ** 2) * observed).sum(axis=(1, 2)) / observed_count)
+        residual_abs_mean = (np.abs(residual) * observed).sum(axis=(1, 2)) / observed_count
+        total_var = (((residual - residual_mean) ** 2) * observed).sum(axis=(1, 2)) / observed_count
+        hour_mean = (residual * observed).sum(axis=1) / np.clip(observed.sum(axis=1), 1.0, None)
+        hour_weight = observed.sum(axis=1) / observed_count[:, None]
+        hour_eta = (((hour_mean - residual_mean[:, 0, 0][:, None]) ** 2) * hour_weight).sum(axis=1) / np.clip(total_var, 1e-8, None)
+        day_count = sales.shape[1]
+        weekday_ids = np.arange(day_count) % 7
+        weekday_eta = np.zeros(x.shape[0], dtype=np.float32)
+        for weekday in range(7):
+            day_sel = weekday_ids == weekday
+            wk_obs = observed[:, day_sel, :].sum(axis=(1, 2))
+            wk_mean = (residual[:, day_sel, :] * observed[:, day_sel, :]).sum(axis=(1, 2)) / np.clip(wk_obs, 1.0, None)
+            wk_weight = wk_obs / observed_count
+            weekday_eta += ((wk_mean - residual_mean[:, 0, 0]) ** 2) * wk_weight
+        weekday_eta = weekday_eta / np.clip(total_var, 1e-8, None)
+        discount = x[:, 2, :].reshape(x.shape[0], -1, hours)
+        discount_mean = (discount * observed).sum(axis=(1, 2)) / observed_count
+        discount_std = np.sqrt((((discount - discount_mean[:, None, None]) ** 2) * observed).sum(axis=(1, 2)) / observed_count)
+        structure_score = np.asarray(hour_eta) + np.asarray(weekday_eta) + np.asarray(discount_std)
         for i in range(x.shape[0]):
             rows.append(
                 {
@@ -382,6 +404,11 @@ def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
                     "observed_rate": float(observed_rate[i]),
                     "stockout_rate": float(1.0 - observed_rate[i]),
                     "residual_std": float(residual_std[i]),
+                    "residual_abs_mean": float(residual_abs_mean[i]),
+                    "residual_hour_eta": float(np.clip(hour_eta[i], 0.0, 1.0)),
+                    "residual_weekday_eta": float(np.clip(weekday_eta[i], 0.0, 1.0)),
+                    "discount_std": float(discount_std[i]),
+                    "residual_structure_score": float(structure_score[i]),
                 }
             )
         offset += x.shape[0]
@@ -398,6 +425,14 @@ def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
         if row["stockout_rate"] > float(filter_cfg.get("max_stockout_rate", np.inf)):
             continue
         if row["residual_std"] < float(filter_cfg.get("min_residual_std", -np.inf)):
+            continue
+        if row["residual_abs_mean"] < float(filter_cfg.get("min_residual_abs_mean", -np.inf)):
+            continue
+        if row["residual_hour_eta"] < float(filter_cfg.get("min_residual_hour_eta", -np.inf)):
+            continue
+        if row["residual_weekday_eta"] < float(filter_cfg.get("min_residual_weekday_eta", -np.inf)):
+            continue
+        if row["discount_std"] < float(filter_cfg.get("min_discount_std", -np.inf)):
             continue
         keep.append(row)
     sort_key = str(filter_cfg.get("sort_by", "residual_std"))

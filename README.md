@@ -163,4 +163,14 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-11_output_decompositio
 uv run decoupled-ts residual-sweep --config configs/2-Exp-11_output_decomposition_freshretailnet.json
 ```
 
+To run follow-up sweeps for subset selection, bias control, synthetic difficulty, and final paper-style tables:
+
+```bash
+uv run decoupled-ts residual-sweep --config configs/2-Exp-12_freshretailnet_subset_conditions.json
+uv run decoupled-ts residual-sweep --config configs/2-Exp-13_freshretailnet_bias_control.json
+uv run decoupled-ts residual-sweep --config configs/2-Exp-14_synthetic_difficulty_sweep.json
+uv run decoupled-ts residual-sweep --config configs/2-Exp-15_final_synthetic.json
+uv run decoupled-ts residual-sweep --config configs/2-Exp-15_final_freshretailnet.json
+```
+
 The sweep runner writes per-seed runs plus `all_results.csv`, `aggregate.csv`, and `summary.json` under `sweep.output_dir`.

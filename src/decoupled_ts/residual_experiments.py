@@ -50,8 +50,8 @@ def residual_batch(batch: dict[str, torch.Tensor], config: dict[str, Any]) -> di
     observed = mask_grid[..., 0]
     method = str(config.get("residual", {}).get("baseline_method", "same_hour_recent_mean"))
     target = str(config.get("residual", {}).get("target", "baseline_residual"))
-    if target == "true_residual" and "true_residual" in batch:
-        residual = batch["true_residual"].to(sales.device)
+    if target in {"true_residual", "noisy_true_residual"} and target in batch:
+        residual = batch[target].to(sales.device)
         baseline = sales - residual
     elif method == "same_hour_recent_mean":
         baseline = _same_hour_recent_mean_torch(sales, observed, int(config["dataset"].get("recent_days", 7)))
@@ -132,9 +132,22 @@ def component_constraint_loss(out: dict[str, torch.Tensor]) -> torch.Tensor:
 def residual_loss(out: dict[str, torch.Tensor], rb: dict[str, torch.Tensor], config: dict[str, Any]) -> dict[str, torch.Tensor]:
     observed = rb["observed"]
     residual = rb["residual"]
-    abs_loss = (torch.abs(out["residual_hat"] - residual) * observed).sum() / observed.sum().clamp_min(1.0)
+    error = out["residual_hat"] - residual
+    abs_loss = (torch.abs(error) * observed).sum() / observed.sum().clamp_min(1.0)
     total = abs_loss
     values = {"loss_residual_reconstruction": abs_loss.detach()}
+    residual_bias_weight = float(config["loss"].get("residual_bias_weight", 0.0))
+    if residual_bias_weight > 0.0:
+        residual_bias = torch.square((error * observed).sum() / observed.sum().clamp_min(1.0))
+        total = total + residual_bias_weight * residual_bias
+        values["loss_residual_bias"] = residual_bias.detach()
+    series_residual_bias_weight = float(config["loss"].get("series_residual_bias_weight", 0.0))
+    if series_residual_bias_weight > 0.0:
+        series_count = observed.sum(dim=(1, 2)).clamp_min(1.0)
+        series_bias = (error * observed).sum(dim=(1, 2)) / series_count
+        series_bias_penalty = torch.mean(torch.square(series_bias))
+        total = total + series_residual_bias_weight * series_bias_penalty
+        values["loss_series_residual_bias"] = series_bias_penalty.detach()
     if "z_global" in out:
         decouple = residual_decouple_penalty(out)
         total = total + float(config["loss"].get("decouple_weight", 0.0)) * decouple
@@ -235,6 +248,7 @@ def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, An
         "true_hour": [],
         "true_interaction": [],
         "true_residual": [],
+        "noisy_true_residual": [],
     }
     for batch in tqdm(loader, desc="residual test", unit="batch"):
         batch_dev = {key: value.to(device, non_blocking=True) for key, value in batch.items()}
@@ -251,7 +265,7 @@ def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, An
         for key in ("global_component", "day_component", "hour_component", "interaction_component"):
             if key in out:
                 components[key].append(out[key].detach().cpu().numpy())
-        for key in ("true_global", "true_day", "true_hour", "true_interaction", "true_residual"):
+        for key in ("true_global", "true_day", "true_hour", "true_interaction", "true_residual", "noisy_true_residual"):
             if key in batch:
                 components[key].append(batch[key].numpy())
     result = {key: np.concatenate(value, axis=0) for key, value in parts.items()}
@@ -282,6 +296,50 @@ def residual_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
         metrics["high_residual_top10_baseline_mae"] = float(np.mean(np.abs(baseline[high] - sales[high])))
         metrics["high_residual_top10_corrected_mae"] = float(np.mean(np.abs(corrected[high] - sales[high])))
     return metrics
+
+
+def _observed_mean(values: np.ndarray, observed: np.ndarray) -> float:
+    keep = observed > 0
+    if not keep.any():
+        return 0.0
+    return float(np.mean(values[keep]))
+
+
+def residual_prediction_bias(arrays: dict[str, np.ndarray]) -> float:
+    return _observed_mean(arrays["residual_hat"] - arrays["residual"], arrays["observed"])
+
+
+def calibrated_residual_metrics(
+    valid_arrays: dict[str, np.ndarray],
+    test_arrays: dict[str, np.ndarray],
+    calibration_cfg: dict[str, Any],
+) -> dict[str, float]:
+    if not bool(calibration_cfg.get("enabled", False)):
+        return {}
+    mode = str(calibration_cfg.get("mode", "validation_residual_bias"))
+    adjusted = dict(test_arrays)
+    bias = 0.0
+    if mode == "validation_residual_bias":
+        bias = residual_prediction_bias(valid_arrays)
+        adjusted["residual_hat"] = test_arrays["residual_hat"] - bias
+    elif mode == "test_oracle_residual_bias":
+        bias = residual_prediction_bias(test_arrays)
+        adjusted["residual_hat"] = test_arrays["residual_hat"] - bias
+    elif mode == "none":
+        adjusted["residual_hat"] = test_arrays["residual_hat"].copy()
+    else:
+        raise ValueError(f"unknown calibration mode: {mode}")
+    clip_quantile = calibration_cfg.get("clip_residual_quantile")
+    if clip_quantile is not None:
+        keep = valid_arrays["observed"] > 0
+        q = float(clip_quantile)
+        limit = float(np.quantile(np.abs(valid_arrays["residual"][keep]), q)) if keep.any() else 0.0
+        adjusted["residual_hat"] = np.clip(adjusted["residual_hat"], -limit, limit)
+    metrics = residual_metrics(adjusted)
+    metrics.update(component_recovery_metrics(adjusted))
+    metrics.update(component_ablation_metrics(adjusted))
+    metrics["calibration_residual_bias"] = bias
+    return {f"calibrated_{key}": value for key, value in metrics.items()}
 
 
 def _corr(a: np.ndarray, b: np.ndarray) -> float:
@@ -469,6 +527,7 @@ def save_latent_outputs(arrays: dict[str, np.ndarray], out_dir: Path) -> None:
         "true_hour",
         "true_interaction",
         "true_residual",
+        "noisy_true_residual",
         "subgroup",
     ):
         if key in arrays:
@@ -489,6 +548,11 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
         variant_config["swap_regularization"] = {
             **config.get("swap_regularization", {}),
             **variant["swap_regularization_overrides"],
+        }
+    if "calibration_overrides" in variant:
+        variant_config["calibration"] = {
+            **config.get("calibration", {}),
+            **variant["calibration_overrides"],
         }
     name = variant["name"]
     out_dir = root_out / name
@@ -547,10 +611,12 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     checkpoint = torch.load(best_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"])
     train_arrays = predict_residuals(model, train_loader, variant_config, device)
+    valid_arrays = predict_residuals(model, valid_loader, variant_config, device)
     test_arrays = predict_residuals(model, test_loader, variant_config, device)
     metrics = residual_metrics(test_arrays)
     metrics.update(component_recovery_metrics(test_arrays))
     metrics.update(component_ablation_metrics(test_arrays))
+    metrics.update(calibrated_residual_metrics(valid_arrays, test_arrays, variant_config.get("calibration", {})))
     metrics.update(run_latent_probes(train_arrays, test_arrays, variant_config))
     metrics.update(evaluate_swap_diagnostics(model, test_loader, variant_config, device))
     save_residual_predictions(out_dir / "residual_predictions.csv", test_arrays)
