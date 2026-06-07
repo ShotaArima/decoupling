@@ -127,3 +127,106 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-16_freshretailnet_aggr
 一方で、probe も ablation も上がらず、calibration 後も high residual top10 が改善しない場合は、その residual target は分離表現の学習対象として弱い。
 
 FreshRetailNet で一番重要なのは、全体平均の MAE だけではない。どの target で構造が残り、どの target で消えるかを示すことで、提案法の適用条件を狭くても明確にする。
+
+## 結果メモ
+
+### 16-A: target sensitivity
+
+3 seed の平均では、`series_mean_all` が最も明確に改善した。
+
+| scenario | model | baseline MAE | corrected MAE | high residual baseline MAE | high residual corrected MAE | residual R2 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `series_mean_all` | `output_decomp_bias_loss_calibrated` | 0.0697 | 0.0519 | 0.2788 | 0.2026 | 0.3840 |
+| `series_mean_all` | `output_decomp_centered` | 0.0697 | 0.0524 | 0.2788 | 0.2124 | 0.3549 |
+| `same_hour_recent_mean_d7_all` | `output_decomp_centered` | 0.0580 | 0.0564 | 0.2534 | 0.2438 | 0.0688 |
+| `log1p_same_hour_recent_mean_d7_all` | `output_decomp_centered` | 0.0571 | 0.0545 | 0.2553 | 0.2534 | 0.0139 |
+| `weekday_same_hour_mean_all` | `output_decomp_centered` | 0.0420 | 0.0427 | 0.1955 | 0.1954 | 0.0032 |
+
+解釈:
+
+- `series_mean` は強すぎない基準成分として機能しており、残差に学習可能な day/hour/interaction 構造を残している。
+- `weekday_same_hour_mean` は baseline として強く、残差がほぼ小さい誤差になっている。補正しても baseline を超えにくい。
+- `same_hour_recent_mean_d7` は以前よりは改善しているが、`series_mean` ほどの余地はない。
+- `log1p_same_hour_recent_mean_d7` は全体 MAE を改善するが、高残差 top10 では改善が弱い。大きい外れ値を圧縮しすぎている可能性がある。
+- `residual_repro_score` 上位 subset は、今回の設計では改善 subset を安定して選べていない。特に `same_hour_recent_mean_d3_repro_top` は全体 MAE が悪化した。
+
+成分 ablation では、`series_mean_all` の `output_decomp_bias_loss_calibrated` で hour 成分の寄与が大きい。
+
+| scenario | model | day delta | hour delta | interaction delta |
+| --- | --- | ---: | ---: | ---: |
+| `series_mean_all` | `output_decomp_bias_loss_calibrated` | 0.0017 | 0.0102 | 0.0010 |
+| `series_mean_all` | `output_decomp_centered` | 0.0009 | 0.0083 | 0.0006 |
+| `same_hour_recent_mean_d7_all` | `output_decomp_centered` | 0.0015 | 0.0009 | 0.0013 |
+
+これは、FreshRetailNet のこの設定では「曜日」よりも「時間帯」構造が残差補正に効いていることを示す。
+
+### 16-B: aggregation sensitivity
+
+集約粒度では、店舗第三カテゴリ + `series_mean` が最も良い。
+
+| scenario | model | baseline MAE | corrected MAE | high residual baseline MAE | high residual corrected MAE | residual R2 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `store_third_category_series_mean_repro_top` | `output_decomp_centered` | 0.0811 | 0.0678 | 0.3138 | 0.2704 | 0.1951 |
+| `store_third_category_series_mean_repro_top` | `output_decomp_bias_loss_calibrated` | 0.0811 | 0.0681 | 0.3138 | 0.2624 | 0.2050 |
+| `store_product_same_hour_d7` | `output_decomp_centered` | 0.0580 | 0.0567 | 0.2534 | 0.2434 | 0.0703 |
+| `store_total_log1p_same_hour_d7_repro_top` | `output_decomp_centered` | 0.7375 | 0.7154 | 2.4463 | 2.3317 | 0.0378 |
+| `store_second_category_weekday_repro_top` | `output_decomp_centered` | 0.0724 | 0.0750 | 0.3447 | 0.3459 | -0.0099 |
+
+解釈:
+
+- 店舗第三カテゴリ集約では、店舗商品単位よりも残差に安定した構造が残る。
+- 店舗第二カテゴリ + weekday baseline は悪化しており、baseline が構造を消しすぎているか、集約粒度が粗すぎる可能性がある。
+- 店舗全体 + log1p は改善するが、スケールが大きく、主実験にするには別枠で扱う必要がある。
+
+## 現時点の結論
+
+2-Exp-16 の結果は、FreshRetailNet を「全 target でうまくいかない外部データ」ではなく、「baseline と集約粒度を選ぶと残差分離の余地が出る外部データ」として扱えることを示している。
+
+論文上の主張としては、次が最も筋がよい。
+
+1. `same_hour_recent_mean` は強すぎるため、残差分離の主実験 target には向きにくい。
+2. `series_mean` では residual R2、補正 MAE、高残差 top10 が明確に改善する。
+3. 成分 ablation では hour 成分の寄与が最も大きく、FreshRetailNet では時間帯構造の残差補正が中心になる。
+4. 店舗第三カテゴリへ集約すると、店舗商品単位より残差構造が見えやすくなる。
+5. ただし `residual_repro_score` はまだ selector として弱く、改善系列を安定して選ぶには再設計が必要である。
+
+## 次に行うべき実験
+
+次は `2-Exp-17` として、`series_mean_all` と `store_third_category_series_mean_repro_top` に絞った本実験に進む。
+
+目的:
+
+- 2-Exp-16 で見えた改善が偶然ではないことを確認する
+- `output_decomp_centered` と `output_decomp_bias_loss_calibrated` のどちらを論文の FreshRetailNet 主モデルにするか決める
+- hour 成分が本当に効いているかを可視化と ablation で確認する
+
+推奨比較:
+
+- `series_mean_all`
+- `store_third_category_series_mean_repro_top`
+- 対照として `same_hour_recent_mean_d7_all`
+- 負例として `weekday_same_hour_mean_all`
+
+見るべきもの:
+
+- 5 seed 以上の平均と標準偏差
+- corrected MAE / RMSE / WAPE
+- high residual top10 MAE
+- `without_hour` ablation delta
+- hour component heatmap
+- residual hour profile と predicted hour component の相関
+- calibration 前後の bias
+
+成功条件:
+
+- `series_mean_all` で corrected MAE が baseline より安定して改善する
+- high residual top10 でも改善する
+- `without_hour` ablation delta が一貫して正になる
+- heatmap で時間帯成分が解釈可能な形を持つ
+
+失敗条件:
+
+- seed を増やすと改善が消える
+- 改善はあるが bias が大きすぎる
+- hour ablation が効かず、単なる global 補正で説明できる
+- 集約粒度を変えると結果が不安定になる

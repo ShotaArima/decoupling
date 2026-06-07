@@ -22,4 +22,5 @@
 | 2-Exp-11 | [2-Exp-11_output_decomposition_design.md](2-Exp-11_output_decomposition_design.md) | 出力成分を `global/day/hour/interaction` に分ける残差直交分解モデル |
 | 2-Exp-12〜15 | [2-Exp-12_to_15_followup_design.md](2-Exp-12_to_15_followup_design.md) | FreshRetailNet subset 条件、bias 制御、synthetic 難易度、論文用最終比較 |
 | 2-Exp-16 | [2-Exp-16_residual_target_sensitivity.md](2-Exp-16_residual_target_sensitivity.md) | FreshRetailNet の residual target 感度、再現性 subset、集約粒度の比較 |
+| 2-Exp-17 | [2-Exp-17_freshretailnet_hour_component_validation.md](2-Exp-17_freshretailnet_hour_component_validation.md) | FreshRetailNet での `series_mean` 残差と hour 成分寄与の 5 seed 検証 |
 | Proposal | [proposal/README.md](proposal/README.md) | 残差直交分解に基づく論文化方針、数理保証、実験計画 |

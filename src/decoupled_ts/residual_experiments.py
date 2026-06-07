@@ -391,6 +391,7 @@ def calibrated_residual_metrics(
     metrics = residual_metrics(adjusted)
     metrics.update(component_recovery_metrics(adjusted))
     metrics.update(component_ablation_metrics(adjusted))
+    metrics.update(hour_profile_metrics(adjusted))
     metrics["calibration_residual_bias"] = bias
     return {f"calibrated_{key}": value for key, value in metrics.items()}
 
@@ -451,6 +452,27 @@ def component_ablation_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float
         mae = float(np.mean(np.abs(pred[keep] - target[keep])))
         metrics[f"component_ablation_without_{name}_mae"] = mae
         metrics[f"component_ablation_without_{name}_mae_delta"] = mae - full_mae
+    return metrics
+
+
+def hour_profile_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
+    keep = arrays["observed"] > 0
+    residual = arrays["residual"]
+    pred = arrays["residual_hat"]
+    observed = arrays["observed"]
+    residual_profile = np.sum(residual * observed, axis=(0, 1)) / np.clip(np.sum(observed, axis=(0, 1)), 1.0, None)
+    pred_profile = np.sum(pred * observed, axis=(0, 1)) / np.clip(np.sum(observed, axis=(0, 1)), 1.0, None)
+    metrics = {
+        "residual_hour_profile_corr": _corr(residual_profile, pred_profile),
+        "residual_hour_profile_mae": float(np.mean(np.abs(residual_profile - pred_profile))),
+    }
+    if "hour_component" in arrays:
+        hour_component = arrays["hour_component"]
+        component_profile = np.sum(hour_component * observed, axis=(0, 1)) / np.clip(np.sum(observed, axis=(0, 1)), 1.0, None)
+        metrics["hour_component_residual_profile_corr"] = _corr(residual_profile, component_profile)
+        metrics["hour_component_profile_mean_abs"] = float(np.mean(np.abs(component_profile)))
+    if keep.any() and "hour_component" in arrays:
+        metrics["hour_component_cell_abs_mean"] = float(np.mean(np.abs(arrays["hour_component"][keep])))
     return metrics
 
 
@@ -673,6 +695,7 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     metrics = residual_metrics(test_arrays)
     metrics.update(component_recovery_metrics(test_arrays))
     metrics.update(component_ablation_metrics(test_arrays))
+    metrics.update(hour_profile_metrics(test_arrays))
     metrics.update(calibrated_residual_metrics(valid_arrays, test_arrays, variant_config.get("calibration", {})))
     metrics.update(run_latent_probes(train_arrays, test_arrays, variant_config))
     metrics.update(evaluate_swap_diagnostics(model, test_loader, variant_config, device))
