@@ -10,6 +10,24 @@
 2. FreshRetailNet で、従来の暗黙的な latent 分離よりも、出力分解モデルの方が解釈しやすいことを示す。
 3. 基準値 $b$ が強い状況でも、外れケースや構造が強い subset では $b+\hat r$ が役立つ可能性を検証する。
 
+## 1.1 現在の到達状況
+
+2-Exp-23 までで、論文の主要実験はほぼ揃った。
+
+| 項目 | 状態 | 根拠 |
+|---|---|---|
+| synthetic component recovery | 達成 | 2-Exp-22 で `output_decomp_centered` が true component を高相関で回復 |
+| centering の必要性 | 達成 | `output_decomp_no_center` は global / interaction の解釈が崩れる |
+| interaction component の必要性 | synthetic では達成 | `high_interaction` で no-interaction が悪化 |
+| FreshRetailNet の予測補正 | 条件付きで達成 | `series_mean_all` で baseline より改善 |
+| high residual 改善 | 達成 | `series_mean_all` の calibrated high residual top10 が安定改善 |
+| FreshRetailNet の hour component 解釈 | 達成 | `series_mean_all` の hour profile corr が約 0.99 |
+| same-hour baseline 下での改善 | 限定的 | `same_hour_recent_mean_d7_all` は改善が小さく、一部 calibration で悪化 |
+| real data interaction の強い主張 | 不十分 | FreshRetailNet では interaction 成分の主張は synthetic より弱い |
+| 論文用表の再生成 | 達成 | 2-Exp-23 で CSV/Markdown を固定 |
+
+このため、今後は追加実験よりも、本文表の絞り込み、図の選定、主張の過不足調整を優先する。
+
 ## 2. 比較するモデル
 
 最低限、以下を比較する。
@@ -29,6 +47,16 @@
 
 P4 は補助的に扱う。
 理由は、これまでの結果では swap だけで分離を保証するには弱かったためである。
+
+現時点の採用方針:
+
+| 位置づけ | 採用するモデル |
+|---|---|
+| 主提案 | `output_decomp_centered` |
+| FreshRetailNet の主成功例 | `bias_constrained_001` と `mae_grid_reference` |
+| 解釈性の負例 | `output_decomp_no_center` |
+| interaction の負例 | `output_decomp_centered_no_interaction` |
+| 補助・appendix | swap / leakage probe 系 |
 
 ## 3. 実験 A: Controlled Synthetic
 
@@ -106,6 +134,16 @@ $$
 - interaction が強い条件で、$\hat u$ が $u$ を回復する。
 - ノイズや欠損が増えても、成分制約ありモデルが比較的安定する。
 
+### 結果
+
+2-Exp-22 で主成功条件は満たした。
+
+- `base` で global/day/hour はほぼ完全に回復し、interaction も高く回復した。
+- `high_interaction` で interaction component の必要性が出た。
+- `low_interaction` で interaction ablation delta が小さくなった。
+- `low_hour_signal` で hour ablation delta が小さくなった。
+- `small_sample` と `high_noise` で成分回復が落ち、失敗条件も示せた。
+
 ## 4. 実験 B: Ablation on Synthetic
 
 ### 目的
@@ -127,6 +165,14 @@ $$
 - interaction centering を外すと $\hat u$ が day/hour 主効果を吸収して悪化する。
 - leakage suppression を入れると、probe leakage が下がる。
 - reconstruction が少し悪化しても、component recovery が改善する。
+
+### 結果
+
+2-Exp-22 で、少なくとも centering の必要性は確認済みである。
+
+`output_decomp_no_center` は residual MAE だけでは極端に悪くないが、global corr が負になり、interaction corr が崩れる。
+
+leakage suppression そのものは本文の主軸にはせず、appendix の補助検証に回す。
 
 ## 5. 実験 C: FreshRetailNet Full Evaluation
 
@@ -212,6 +258,24 @@ $$
 - interaction subset では $\Delta_u$ が大きい。
 - P2/P3 は B3 より leakage が低い。
 
+### 結果
+
+FreshRetailNet では、成功条件は target に依存する。
+
+`series_mean_all`:
+
+- 全体 MAE が改善した。
+- high residual top10 が改善した。
+- hour component が residual hour profile と強く対応した。
+
+`same_hour_recent_mean_d7_all`:
+
+- 改善は小さい。
+- calibration 後に全体 MAE が悪化する条件がある。
+- hour component を主張するには弱い。
+
+したがって、FreshRetailNet では `series_mean_all` を主成功例、`same_hour_recent_mean_d7_all` を限界例として扱う。
+
 ## 6. 実験 D: Robustness and Statistics
 
 ### 目的
@@ -242,17 +306,25 @@ $$
 
 各モデルの $\mathrm{MAE}_g,\mathrm{MAE}_a,\mathrm{MAE}_c,\mathrm{MAE}_u$ を比較する。
 
+状態: 2-Exp-23 の `synthetic_component_recovery.md` で生成済み。
+
 ### Table 2: FreshRetailNet correction
 
 baseline MAE と corrected MAE を比較する。
+
+状態: 2-Exp-23 の `freshretail_correction.md` で生成済み。本文用には `series_mean_all` と `same_hour_recent_mean_d7_all` の 2 scenario を使う。
 
 ### Table 3: Factor subset ablation
 
 subset ごとに $\Delta_g,\Delta_a,\Delta_c,\Delta_u$ を出す。
 
+状態: 本文では hour component を中心に扱い、詳細 ablation は appendix 候補。
+
 ### Table 4: Leakage probe
 
 不要情報がどれだけ漏れているかを比較する。
+
+状態: 本文の主張からは外し、appendix または limitation に回す。
 
 ### Figure 1: Model architecture
 
@@ -262,9 +334,13 @@ subset ごとに $\Delta_g,\Delta_a,\Delta_c,\Delta_u$ を出す。
 
 真の $g,a,c,u$ と予測成分を heatmap で比較する。
 
+状態: 2-Exp-22 の表が主で、図は appendix 候補。
+
 ### Figure 3: FreshRetailNet residual heatmap
 
 baseline 残差と補正後残差を subset 別に示す。
+
+状態: 2-Exp-21 と `scripts/plot_2_exp_21_heatmaps.py` で生成可能。
 
 ## 8. 論文としての最低ライン
 
@@ -279,3 +355,11 @@ baseline 残差と補正後残差を subset 別に示す。
 このうち 1 と 3 は必須である。
 2 は強い主張に必要であり、出なければ論文の主張を「予測補正」ではなく「解釈可能な残差分解」に寄せる。
 
+## 9. 現時点の論文ライン
+
+2-Exp-23 時点では、論文は次のラインで成立させるのが妥当である。
+
+1. Synthetic で、成分が存在する場合の同定可能性と centering の必要性を示す。
+2. FreshRetailNet で、残差に hour 構造が残る target では予測補正と high residual 改善が出ることを示す。
+3. 強い same-hour baseline 後の残差では改善が小さいことを、提案法の失敗ではなく適用条件として整理する。
+4. latent の完全分離ではなく、出力成分が検証可能な制約空間にあることを主張する。

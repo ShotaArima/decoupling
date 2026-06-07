@@ -15,6 +15,7 @@
 - 2-Exp-20 で、`series_mean_all` の baseline 改善は 5 seed の paired bootstrap でも 0 未満になった。
 - 2-Exp-21 で、`series_mean_all` は hour component が強く、`same_hour_recent_mean_d7_all` は hour component が薄いことを確認した。
 - 2-Exp-22 で、synthetic では `output_decomp_centered` が true component を高い相関で回復し、centering と interaction component の必要性も確認できた。
+- 2-Exp-23 で、synthetic / FreshRetailNet / statistical validation の論文用表を CSV/Markdown として再生成可能にした。
 - bias 制約つき calibration は bias を抑え、高残差上位 10% の改善を強める一方、全体 MAE は `mae_grid_reference` より悪化する。
 
 したがって、論文の主張は次に寄せるのが現実的である。
@@ -27,11 +28,11 @@ baseline 後の残差に残る day/hour 構造を分解し、
 
 ## あと必要な実験数
 
-最低限は残り 1 本。
+最低限の実験は完了。
 
 | ID | 目的 | 必須度 |
 | --- | --- | --- |
-| `2-Exp-23` | 論文用 final table を 1 つの summary に統合 | 必須 |
+| `2-Exp-23` | 論文用 final table を 1 つの summary に統合 | 完了 |
 
 余裕があれば追加で 2 本。
 
@@ -40,7 +41,7 @@ baseline 後の残差に残る day/hour 構造を分解し、
 | `2-Exp-24` | FreshRetailNet subset threshold の軽い感度確認 | 任意 |
 | `2-Exp-25` | ablation / leakage probe の appendix 用補強 | 任意 |
 
-つまり、論文 1 本の骨格には「あと 1 本」、査読耐性を上げるなら「あと 3 本」が目安。
+つまり、論文 1 本の骨格に必要な実験は揃った。査読耐性を上げるなら、追加で 2 本程度を appendix 用に検討する。
 
 ## Revised Week 1: 統計検証と採用モデル決定
 
@@ -134,30 +135,68 @@ baseline 後の残差に残る day/hour 構造を分解し、
 
 を 1 つの出力ディレクトリに固定する。
 
-## Revised Week 5: 任意の補強
+状態:
+
+```text
+完了。2-Exp-23 で synthetic_component_recovery、freshretail_correction、statistical_validation を生成した。
+```
+
+主な読み取り:
+
+- Synthetic は成分回復と centering の必要性を支える主表として使える。
+- FreshRetailNet は `series_mean_all` を主成功例、`same_hour_recent_mean_d7_all` を限界例として使える。
+- `statistical_validation` は本文には大きすぎるため、本文用の小表と appendix 用の詳細表に分ける。
+
+## Revised Week 5: 本文表の選定と図表整形
 
 期間:
 
 ```text
-2026-07-05 〜 2026-07-11
+2026-06-09 〜 2026-06-15
 ```
 
-### 実験
+### 作業
 
-- `2-Exp-24`: subset threshold sensitivity
-- `2-Exp-25`: leakage / ablation appendix
+- `synthetic_component_recovery` から本文用の 6〜9 行を選ぶ。
+- `freshretail_correction` から `series_mean_all` と `same_hour_recent_mean_d7_all` の主比較を作る。
+- `statistical_validation` から本文用の CI 行だけを抜き出す。
+- 2-Exp-21 の heatmap / hour profile 図を本文候補として選ぶ。
+- appendix に回す表を決める。
 
 ### 完了条件
 
-- 査読で聞かれやすい「subset を選んだから良いだけではないか」に答えられる。
-- 表現分離について appendix に補足表を出せる。
+- 本文 Table 1〜3 の行数と指標が決まっている。
+- Figure 1〜3 の候補が決まっている。
+- 「本文に載せる結果」と「appendix に回す結果」が分かれている。
 
-## Revised Week 6-7: 執筆
+## Revised Week 6: 任意の補強
 
 期間:
 
 ```text
-2026-07-12 〜 2026-07-25
+2026-06-16 〜 2026-06-22
+```
+
+### 実験候補
+
+- `2-Exp-24`: FreshRetailNet subset threshold sensitivity
+- `2-Exp-25`: leakage / ablation appendix
+
+### 実施判断
+
+次のどちらかに該当する場合だけ実施する。
+
+- 本文を書いていて、`series_mean_all` の選び方が恣意的に見える。
+- 表現分離について appendix の補足表がないと説明が弱い。
+
+該当しなければ、追加実験より執筆を優先する。
+
+## Revised Week 7-8: 執筆
+
+期間:
+
+```text
+2026-06-23 〜 2026-07-06
 ```
 
 ### 作業
@@ -182,7 +221,7 @@ baseline 後の残差に残る day/hour 構造を分解し、
 期間:
 
 ```text
-2026-07-26 〜 2026-08-01
+2026-07-07 〜 2026-07-13
 ```
 
 ### 判断基準
