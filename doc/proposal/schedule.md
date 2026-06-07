@@ -2,7 +2,7 @@
 
 ## 現在地
 
-更新日: 2026-06-07
+更新日: 2026-06-08
 
 当初の 12 週間計画のうち、実装と探索の多くは前倒しで進んでいる。
 
@@ -12,6 +12,8 @@
 - FreshRetailNet では、`same_hour_recent_mean` のような強い baseline の残差は構造が薄い。
 - `series_mean` residual では hour 構造が残り、hour component の寄与が安定して大きい。
 - 2-Exp-17〜19 で、FreshRetailNet でも `series_mean_all` とカテゴリ集約条件では baseline より低い MAE が出た。
+- 2-Exp-20 で、`series_mean_all` の baseline 改善は 5 seed の paired bootstrap でも 0 未満になった。
+- 2-Exp-21 で、`series_mean_all` は hour component が強く、`same_hour_recent_mean_d7_all` は hour component が薄いことを確認した。
 - bias 制約つき calibration は bias を抑え、高残差上位 10% の改善を強める一方、全体 MAE は `mae_grid_reference` より悪化する。
 
 したがって、論文の主張は次に寄せるのが現実的である。
@@ -24,12 +26,10 @@ baseline 後の残差に残る day/hour 構造を分解し、
 
 ## あと必要な実験数
 
-最低限は 4 本。
+最低限は残り 2 本。
 
 | ID | 目的 | 必須度 |
 | --- | --- | --- |
-| `2-Exp-20` | 2-Exp-19 の seed-level paired bootstrap | 必須 |
-| `2-Exp-21` | 成功例・失敗例の heatmap / residual profile 可視化 | 必須 |
 | `2-Exp-22` | synthetic difficulty の最終表を固定 | 必須 |
 | `2-Exp-23` | 論文用 final table を 1 つの summary に統合 | 必須 |
 
@@ -40,7 +40,7 @@ baseline 後の残差に残る day/hour 構造を分解し、
 | `2-Exp-24` | FreshRetailNet subset threshold の軽い感度確認 | 任意 |
 | `2-Exp-25` | ablation / leakage probe の appendix 用補強 | 任意 |
 
-つまり、論文 1 本の骨格には「あと 4 本」、査読耐性を上げるなら「あと 6 本」が目安。
+つまり、論文 1 本の骨格には「あと 2 本」、査読耐性を上げるなら「あと 4 本」が目安。
 
 ## Revised Week 1: 統計検証と採用モデル決定
 
@@ -60,6 +60,12 @@ baseline 後の残差に残る day/hour 構造を分解し、
 - `bias_constrained_001` を主モデルにするか、`mae_grid_reference` を主モデルにするかを決める。
 - 全体 MAE、bias、高残差 top10 の trade-off を表にできる。
 
+状態:
+
+```text
+完了。2-Exp-20 で series_mean_all の baseline 改善 CI は 0 未満。
+```
+
 ## Revised Week 2: 可視化と成功・失敗例
 
 期間:
@@ -78,12 +84,18 @@ baseline 後の残差に残る day/hour 構造を分解し、
 - `series_mean_all` で hour component が residual hour profile と対応する図がある。
 - `same_hour_recent_mean_d7_all` で残差構造が薄いことを示す図がある。
 
+状態:
+
+```text
+metrics は完了。visualization CSV からの図生成は scripts/plot_2_exp_21_heatmaps.py で対応済み。
+```
+
 ## Revised Week 3: Synthetic 最終表
 
 期間:
 
 ```text
-2026-06-21 〜 2026-06-27
+2026-06-08 〜 2026-06-14
 ```
 
 ### 実験

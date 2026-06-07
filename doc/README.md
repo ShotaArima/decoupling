@@ -27,4 +27,5 @@
 | 2-Exp-19 | [2-Exp-19_bias_constrained_calibration.md](2-Exp-19_bias_constrained_calibration.md) | FreshRetailNet 残差補正における bias 制約つき calibration |
 | 2-Exp-20 | [2-Exp-20_statistical_validation.md](2-Exp-20_statistical_validation.md) | FreshRetailNet 残差補正の seed-level paired bootstrap |
 | 2-Exp-21 | [2-Exp-21_visualization.md](2-Exp-21_visualization.md) | FreshRetailNet 残差補正の hour profile と成功・失敗例の可視化 |
+| 2-Exp-22 | [2-Exp-22_synthetic_difficulty_final.md](2-Exp-22_synthetic_difficulty_final.md) | Synthetic での成分回復と失敗条件の最終表 |
 | Proposal | [proposal/README.md](proposal/README.md) | 残差直交分解に基づく論文化方針、数理保証、実験計画 |
