@@ -23,6 +23,12 @@ from .train import optimize_torch_runtime, resolve_device
 from .retail_experiments import seed_everything
 
 
+def _series_mean_torch(sales: torch.Tensor, observed: torch.Tensor) -> torch.Tensor:
+    series_sum = (sales * observed).sum(dim=(1, 2), keepdim=True)
+    series_count = observed.sum(dim=(1, 2), keepdim=True).clamp_min(1.0)
+    return torch.broadcast_to(series_sum / series_count, sales.shape)
+
+
 def _same_hour_recent_mean_torch(sales: torch.Tensor, observed: torch.Tensor, recent_days: int) -> torch.Tensor:
     series_sum = (sales * observed).sum(dim=(1, 2), keepdim=True)
     series_count = observed.sum(dim=(1, 2), keepdim=True).clamp_min(1.0)
@@ -43,6 +49,23 @@ def _same_hour_recent_mean_torch(sales: torch.Tensor, observed: torch.Tensor, re
     return baseline
 
 
+def _weekday_same_hour_mean_torch(sales: torch.Tensor, observed: torch.Tensor) -> torch.Tensor:
+    series_mean = _series_mean_torch(sales, observed)
+    baseline = torch.empty_like(sales)
+    days = sales.shape[1]
+    weekday_ids = torch.arange(days, device=sales.device) % 7
+    for weekday in range(7):
+        day_sel = weekday_ids == weekday
+        if not bool(day_sel.any()):
+            continue
+        wk_sales = sales[:, day_sel, :] * observed[:, day_sel, :]
+        wk_count = observed[:, day_sel, :].sum(dim=1)
+        wk_mean = wk_sales.sum(dim=1) / wk_count.clamp_min(1.0)
+        fill = torch.where(wk_count > 0, wk_mean, series_mean[:, 0, :])
+        baseline[:, day_sel, :] = fill[:, None, :]
+    return baseline
+
+
 def residual_batch(batch: dict[str, torch.Tensor], config: dict[str, Any]) -> dict[str, torch.Tensor]:
     grid = flatten_to_grid(batch["x"])
     mask_grid = flatten_to_grid(batch["mask"])
@@ -53,14 +76,35 @@ def residual_batch(batch: dict[str, torch.Tensor], config: dict[str, Any]) -> di
     if target in {"true_residual", "noisy_true_residual"} and target in batch:
         residual = batch[target].to(sales.device)
         baseline = sales - residual
-    elif method == "same_hour_recent_mean":
-        baseline = _same_hour_recent_mean_torch(sales, observed, int(config["dataset"].get("recent_days", 7)))
+        extra: dict[str, torch.Tensor] = {}
+    elif method == "series_mean":
+        baseline = _series_mean_torch(sales, observed)
         residual = sales - baseline
+        extra = {}
+    elif method == "weekday_same_hour_mean":
+        baseline = _weekday_same_hour_mean_torch(sales, observed)
+        residual = sales - baseline
+        extra = {}
+    elif method == "same_hour_recent_mean":
+        recent_days = int(config.get("residual", {}).get("recent_days", config["dataset"].get("recent_days", 7)))
+        baseline = _same_hour_recent_mean_torch(sales, observed, recent_days)
+        residual = sales - baseline
+        extra = {}
+    elif method == "log1p_same_hour_recent_mean":
+        recent_days = int(config.get("residual", {}).get("recent_days", config["dataset"].get("recent_days", 7)))
+        log_sales = torch.log1p(torch.clamp_min(sales, 0.0))
+        baseline_log = _same_hour_recent_mean_torch(log_sales, observed, recent_days)
+        baseline = torch.expm1(baseline_log).clamp_min(0.0)
+        residual = log_sales - baseline_log
+        extra = {"baseline_log": baseline_log}
     else:
-        raise ValueError("residual experiments currently support baseline_method='same_hour_recent_mean'")
+        raise ValueError(
+            "residual experiments support baseline_method in "
+            "{'series_mean', 'weekday_same_hour_mean', 'same_hour_recent_mean', 'log1p_same_hour_recent_mean'}"
+        )
     x_residual = batch["x"].clone()
     x_residual[:, 0, :] = residual.reshape(residual.shape[0], -1)
-    return {
+    result = {
         "x": x_residual,
         "mask": batch["mask"],
         "sales": sales,
@@ -68,6 +112,8 @@ def residual_batch(batch: dict[str, torch.Tensor], config: dict[str, Any]) -> di
         "baseline": baseline,
         "residual": residual,
     }
+    result.update(extra)
+    return result
 
 
 def make_residual_model(config: dict[str, Any], variant: dict[str, Any], input_dim: int, days: int, hours: int) -> nn.Module:
@@ -236,7 +282,7 @@ def run_epoch(model: nn.Module, loader: DataLoader, config: dict[str, Any], devi
 @torch.no_grad()
 def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, Any], device: torch.device) -> dict[str, np.ndarray]:
     model.eval()
-    parts = {"sales": [], "baseline": [], "residual": [], "residual_hat": [], "observed": [], "grid": [], "subgroup": []}
+    parts = {"sales": [], "baseline": [], "baseline_log": [], "residual": [], "residual_hat": [], "observed": [], "grid": [], "subgroup": []}
     latents: dict[str, list[np.ndarray]] = {"z_global": [], "z_local": [], "z_day": [], "z_hour": [], "z_interaction": []}
     components: dict[str, list[np.ndarray]] = {
         "global_component": [],
@@ -256,6 +302,8 @@ def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, An
         out = model(rb["x"], rb["mask"])
         for key in ("sales", "baseline", "residual", "observed"):
             parts[key].append(rb[key].detach().cpu().numpy())
+        if "baseline_log" in rb:
+            parts["baseline_log"].append(rb["baseline_log"].detach().cpu().numpy())
         parts["residual_hat"].append(out["residual_hat"].detach().cpu().numpy())
         parts["grid"].append(flatten_to_grid(batch["x"]).numpy())
         parts["subgroup"].append(batch["subgroup"].numpy())
@@ -268,7 +316,7 @@ def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, An
         for key in ("true_global", "true_day", "true_hour", "true_interaction", "true_residual", "noisy_true_residual"):
             if key in batch:
                 components[key].append(batch[key].numpy())
-    result = {key: np.concatenate(value, axis=0) for key, value in parts.items()}
+    result = {key: np.concatenate(value, axis=0) for key, value in parts.items() if value}
     result.update({key: np.concatenate(value, axis=0) for key, value in latents.items() if value})
     result.update({key: np.concatenate(value, axis=0) for key, value in components.items() if value})
     return result
@@ -280,7 +328,12 @@ def residual_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
     pred = arrays["residual_hat"][keep]
     sales = arrays["sales"][keep]
     baseline = arrays["baseline"][keep]
-    corrected = baseline + pred
+    if "baseline_log" in arrays:
+        baseline_log = arrays["baseline_log"][keep]
+        corrected = np.expm1(baseline_log + pred)
+        corrected = np.clip(corrected, 0.0, None)
+    else:
+        corrected = baseline + pred
     metrics = {
         "residual_mae": float(np.mean(np.abs(pred - residual))),
         "residual_rmse": float(np.sqrt(np.mean(np.square(pred - residual)))),
@@ -446,12 +499,16 @@ def save_residual_predictions(path: Path, arrays: dict[str, np.ndarray]) -> None
     baseline = arrays["baseline"][keep]
     residual = arrays["residual"][keep]
     pred = arrays["residual_hat"][keep]
+    if "baseline_log" in arrays:
+        corrected = np.clip(np.expm1(arrays["baseline_log"][keep] + pred), 0.0, None)
+    else:
+        corrected = baseline + pred
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["index", "sales", "baseline", "residual", "residual_hat", "corrected", "baseline_abs_error", "corrected_abs_error"])
         writer.writeheader()
-        for idx, row in enumerate(zip(sales, baseline, residual, pred)):
-            y, b, r, r_hat = [float(v) for v in row]
+        for idx, row in enumerate(zip(sales, baseline, residual, pred, corrected)):
+            y, b, r, r_hat, y_hat = [float(v) for v in row]
             writer.writerow(
                 {
                     "index": idx,
@@ -459,9 +516,9 @@ def save_residual_predictions(path: Path, arrays: dict[str, np.ndarray]) -> None
                     "baseline": b,
                     "residual": r,
                     "residual_hat": r_hat,
-                    "corrected": b + r_hat,
+                    "corrected": y_hat,
                     "baseline_abs_error": abs(b - y),
-                    "corrected_abs_error": abs(b + r_hat - y),
+                    "corrected_abs_error": abs(y_hat - y),
                 }
             )
 

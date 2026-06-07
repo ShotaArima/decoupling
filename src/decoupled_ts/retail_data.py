@@ -354,6 +354,121 @@ def _same_hour_recent_mean_np(sales: np.ndarray, observed: np.ndarray, recent_da
     return baseline
 
 
+def _series_mean_np(sales: np.ndarray, observed: np.ndarray) -> np.ndarray:
+    series_sum = (sales * observed).sum(axis=(1, 2), keepdims=True)
+    series_count = observed.sum(axis=(1, 2), keepdims=True)
+    return np.broadcast_to(series_sum / np.clip(series_count, 1.0, None), sales.shape).astype(np.float32)
+
+
+def _weekday_same_hour_mean_np(sales: np.ndarray, observed: np.ndarray) -> np.ndarray:
+    fallback = _series_mean_np(sales, observed)
+    baseline = np.empty_like(sales, dtype=np.float32)
+    weekday_ids = np.arange(sales.shape[1]) % 7
+    for weekday in range(7):
+        day_sel = weekday_ids == weekday
+        if not np.any(day_sel):
+            continue
+        wk_sales = sales[:, day_sel, :] * observed[:, day_sel, :]
+        wk_count = observed[:, day_sel, :].sum(axis=1)
+        wk_mean = np.divide(
+            wk_sales.sum(axis=1),
+            np.clip(wk_count, 1.0, None),
+            out=fallback[:, 0, :].copy(),
+            where=wk_count > 0,
+        )
+        baseline[:, day_sel, :] = wk_mean[:, None, :]
+    return baseline
+
+
+def _baseline_residual_np(sales: np.ndarray, observed: np.ndarray, method: str, recent_days: int) -> tuple[np.ndarray, np.ndarray]:
+    if method == "series_mean":
+        baseline = _series_mean_np(sales, observed)
+        return baseline, sales - baseline
+    if method == "weekday_same_hour_mean":
+        baseline = _weekday_same_hour_mean_np(sales, observed)
+        return baseline, sales - baseline
+    if method == "same_hour_recent_mean":
+        baseline = _same_hour_recent_mean_np(sales, observed, recent_days)
+        return baseline, sales - baseline
+    if method == "log1p_same_hour_recent_mean":
+        log_sales = np.log1p(np.clip(sales, 0.0, None))
+        baseline_log = _same_hour_recent_mean_np(log_sales, observed, recent_days)
+        return np.expm1(baseline_log).clip(0.0), log_sales - baseline_log
+    raise ValueError(f"unknown subset residual baseline_method: {method}")
+
+
+def _safe_corr(x: np.ndarray, y: np.ndarray) -> float:
+    if x.size < 2 or float(np.std(x)) <= 1e-8 or float(np.std(y)) <= 1e-8:
+        return 0.0
+    return float(np.corrcoef(x, y)[0, 1])
+
+
+def _fixed_effect_reproducibility(
+    residual: np.ndarray,
+    observed: np.ndarray,
+    group_ids: np.ndarray,
+    split_day: int,
+    min_count: int,
+) -> np.ndarray:
+    scores = np.zeros(residual.shape[0], dtype=np.float32)
+    groups = np.unique(group_ids)
+    train_days = np.arange(residual.shape[1]) < split_day
+    valid_days = ~train_days
+    for i in range(residual.shape[0]):
+        train_effects = []
+        valid_effects = []
+        for group in groups:
+            group_mask = group_ids == group
+            train_mask = observed[i] > 0
+            train_mask = train_mask & group_mask & train_days[:, None]
+            valid_mask = observed[i] > 0
+            valid_mask = valid_mask & group_mask & valid_days[:, None]
+            if int(train_mask.sum()) < min_count or int(valid_mask.sum()) < min_count:
+                continue
+            train_effects.append(float(residual[i][train_mask].mean()))
+            valid_effects.append(float(residual[i][valid_mask].mean()))
+        scores[i] = max(0.0, _safe_corr(np.asarray(train_effects), np.asarray(valid_effects)))
+    return scores
+
+
+def _binary_effect_reproducibility(
+    residual: np.ndarray,
+    observed: np.ndarray,
+    positive: np.ndarray,
+    split_day: int,
+    min_count: int,
+) -> np.ndarray:
+    scores = np.zeros(residual.shape[0], dtype=np.float32)
+    train_days = np.arange(residual.shape[1]) < split_day
+    valid_days = ~train_days
+    for i in range(residual.shape[0]):
+        diffs = []
+        for day_mask in (train_days, valid_days):
+            pos = (observed[i] > 0) & positive[i] & day_mask[:, None]
+            neg = (observed[i] > 0) & (~positive[i]) & day_mask[:, None]
+            if int(pos.sum()) < min_count or int(neg.sum()) < min_count:
+                diffs.append(None)
+            else:
+                diffs.append(float(residual[i][pos].mean() - residual[i][neg].mean()))
+        if diffs[0] is None or diffs[1] is None:
+            continue
+        train_diff = float(diffs[0])
+        valid_diff = float(diffs[1])
+        if abs(train_diff) <= 1e-8 or abs(valid_diff) <= 1e-8 or np.sign(train_diff) != np.sign(valid_diff):
+            continue
+        ratio = min(abs(valid_diff / train_diff), abs(train_diff / valid_diff))
+        scores[i] = float(np.clip(ratio, 0.0, 1.0))
+    return scores
+
+
+def _stockout_near_mask(observed: np.ndarray) -> np.ndarray:
+    stockout = observed <= 0
+    near = stockout.copy()
+    near[:, :, 1:] |= stockout[:, :, :-1]
+    near[:, :, :-1] |= stockout[:, :, 1:]
+    return near
+
+
 def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
     filter_cfg = cfg.get("subset_filter", {})
     if not bool(filter_cfg.get("enabled", False)):
@@ -361,7 +476,10 @@ def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
     loader = DataLoader(dataset, batch_size=int(filter_cfg.get("batch_size", 512)), shuffle=False)
     rows = []
     offset = 0
-    recent_days = int(cfg.get("recent_days", 7))
+    recent_days = int(filter_cfg.get("recent_days", cfg.get("recent_days", 7)))
+    residual_method = str(filter_cfg.get("baseline_method", "same_hour_recent_mean"))
+    validation_fraction = float(filter_cfg.get("structure_validation_fraction", 0.35))
+    min_effect_count = int(filter_cfg.get("min_effect_count", 4))
     hours = int(cfg.get("hours", cfg.get("window_size", 24)))
     for batch in loader:
         x = batch["x"].numpy()
@@ -373,7 +491,7 @@ def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
         mean_sales = observed_sales.sum(axis=(1, 2)) / observed_count
         nonzero_rate = ((sales > 0.0) * observed).sum(axis=(1, 2)) / observed_count
         observed_rate = observed.mean(axis=(1, 2))
-        residual = sales - _same_hour_recent_mean_np(sales, observed, recent_days)
+        _, residual = _baseline_residual_np(sales, observed, residual_method, recent_days)
         residual_mean = (residual * observed).sum(axis=(1, 2), keepdims=True) / observed_count[:, None, None]
         residual_std = np.sqrt((((residual - residual_mean) ** 2) * observed).sum(axis=(1, 2)) / observed_count)
         residual_abs_mean = (np.abs(residual) * observed).sum(axis=(1, 2)) / observed_count
@@ -394,6 +512,14 @@ def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
         discount = x[:, 2, :].reshape(x.shape[0], -1, hours)
         discount_mean = (discount * observed).sum(axis=(1, 2)) / observed_count
         discount_std = np.sqrt((((discount - discount_mean[:, None, None]) ** 2) * observed).sum(axis=(1, 2)) / observed_count)
+        split_day = int(np.clip(np.floor(sales.shape[1] * (1.0 - validation_fraction)), 1, sales.shape[1] - 1))
+        hour_group = np.broadcast_to(np.arange(hours)[None, :], sales.shape[1:])
+        weekday_group = np.broadcast_to((np.arange(sales.shape[1]) % 7)[:, None], sales.shape[1:])
+        hour_repro = _fixed_effect_reproducibility(residual, observed, hour_group, split_day, min_effect_count)
+        weekday_repro = _fixed_effect_reproducibility(residual, observed, weekday_group, split_day, min_effect_count)
+        discount_repro = _binary_effect_reproducibility(residual, observed, discount > 0.0, split_day, min_effect_count)
+        stockout_repro = _binary_effect_reproducibility(residual, observed, _stockout_near_mask(observed), split_day, min_effect_count)
+        repro_score = hour_repro + weekday_repro + discount_repro + stockout_repro
         structure_score = np.asarray(hour_eta) + np.asarray(weekday_eta) + np.asarray(discount_std)
         for i in range(x.shape[0]):
             rows.append(
@@ -409,6 +535,11 @@ def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
                     "residual_weekday_eta": float(np.clip(weekday_eta[i], 0.0, 1.0)),
                     "discount_std": float(discount_std[i]),
                     "residual_structure_score": float(structure_score[i]),
+                    "residual_hour_repro": float(hour_repro[i]),
+                    "residual_weekday_repro": float(weekday_repro[i]),
+                    "discount_repro": float(discount_repro[i]),
+                    "stockout_repro": float(stockout_repro[i]),
+                    "residual_repro_score": float(repro_score[i]),
                 }
             )
         offset += x.shape[0]
@@ -433,6 +564,16 @@ def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
         if row["residual_weekday_eta"] < float(filter_cfg.get("min_residual_weekday_eta", -np.inf)):
             continue
         if row["discount_std"] < float(filter_cfg.get("min_discount_std", -np.inf)):
+            continue
+        if row["residual_hour_repro"] < float(filter_cfg.get("min_residual_hour_repro", -np.inf)):
+            continue
+        if row["residual_weekday_repro"] < float(filter_cfg.get("min_residual_weekday_repro", -np.inf)):
+            continue
+        if row["discount_repro"] < float(filter_cfg.get("min_discount_repro", -np.inf)):
+            continue
+        if row["stockout_repro"] < float(filter_cfg.get("min_stockout_repro", -np.inf)):
+            continue
+        if row["residual_repro_score"] < float(filter_cfg.get("min_residual_repro_score", -np.inf)):
             continue
         keep.append(row)
     sort_key = str(filter_cfg.get("sort_by", "residual_std"))

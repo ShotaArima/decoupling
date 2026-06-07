@@ -21,4 +21,5 @@
 | 2-Exp-9 | [2-Exp-9_multiseed_and_subset_design.md](2-Exp-9_multiseed_and_subset_design.md) | `interaction_no_swap` / `interaction_with_swap` の複数 seed と FreshRetailNet subset 評価 |
 | 2-Exp-11 | [2-Exp-11_output_decomposition_design.md](2-Exp-11_output_decomposition_design.md) | 出力成分を `global/day/hour/interaction` に分ける残差直交分解モデル |
 | 2-Exp-12〜15 | [2-Exp-12_to_15_followup_design.md](2-Exp-12_to_15_followup_design.md) | FreshRetailNet subset 条件、bias 制御、synthetic 難易度、論文用最終比較 |
+| 2-Exp-16 | [2-Exp-16_residual_target_sensitivity.md](2-Exp-16_residual_target_sensitivity.md) | FreshRetailNet の residual target 感度、再現性 subset、集約粒度の比較 |
 | Proposal | [proposal/README.md](proposal/README.md) | 残差直交分解に基づく論文化方針、数理保証、実験計画 |

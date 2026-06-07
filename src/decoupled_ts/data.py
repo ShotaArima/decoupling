@@ -80,6 +80,28 @@ def _time_features(day_index: int) -> np.ndarray:
     return np.stack([hour_sin, hour_cos, dow_sin, dow_cos], axis=0)
 
 
+def _aggregate_duplicate_days(group: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
+    if not group["dt"].duplicated().any():
+        return group.sort_values("dt")
+    sales_col = cfg["hourly_sales_column"]
+    stock_col = cfg["hourly_stock_column"]
+    stockout_value = float(cfg["stockout_value"])
+    numeric_cols = cfg["daily_numeric_columns"]
+    rows = []
+    for _, day_group in group.sort_values("dt").groupby("dt", sort=False):
+        row = day_group.iloc[0].copy()
+        sales = np.stack([_as_hours(v) for v in day_group[sales_col]], axis=0).astype(np.float32)
+        stock = np.stack([_as_hours(v) for v in day_group[stock_col]], axis=0).astype(np.float32)
+        row[sales_col] = sales.sum(axis=0).astype(float).tolist()
+        # Aggregated demand is observable at an hour if at least one member series is observable.
+        row[stock_col] = np.where(np.any(stock != stockout_value, axis=0), 0.0, stockout_value).astype(float).tolist()
+        for col in numeric_cols:
+            if col in day_group:
+                row[col] = float(day_group[col].astype(np.float32).mean())
+        rows.append(row)
+    return pd.DataFrame(rows).sort_values("dt")
+
+
 def frame_to_examples(
     df: pd.DataFrame,
     cfg: dict[str, Any],
@@ -108,15 +130,16 @@ def frame_to_examples(
     target_groups = None
     if target_df is not None:
         LOGGER.info("Indexing eval targets by %s", ",".join(sample_cols))
-        target_groups = {
-            key: group.sort_values("dt")
-            for key, group in target_df.groupby(sample_cols, sort=False)
-            if len(group) >= forecast_windows
-        }
+        target_groups = {}
+        for key, group in target_df.groupby(sample_cols, sort=False):
+            lookup_key = key if isinstance(key, tuple) else (key,)
+            if len(group) >= forecast_windows:
+                target_groups[lookup_key] = _aggregate_duplicate_days(group, cfg)
         LOGGER.info("Indexed eval target groups=%d", len(target_groups))
 
     iterator = tqdm(grouped, total=grouped.ngroups, desc="build-series", unit="series")
     for key, group in iterator:
+        group = _aggregate_duplicate_days(group, cfg)
         needed_days = history_days if target_groups is None else history_days
         if len(group) < needed_days:
             continue
@@ -238,4 +261,5 @@ def _cache_path(cfg: dict[str, Any], split: str, max_series: int | None) -> Path
     limit = "all" if max_series is None else str(max_series)
     days = f"d{cfg['series_days']}_w{cfg['window_size']}_f{cfg.get('forecast_windows', 2)}"
     subgroup = cfg.get("subgroup_target", "city_id")
-    return cache_dir / f"{split}_{target_mode}_{days}_{subgroup}_{limit}.pt"
+    sample = "-".join(str(col) for col in cfg.get("sample_id_columns", ["sample"]))
+    return cache_dir / f"{split}_{target_mode}_{days}_{subgroup}_{sample}_{limit}.pt"
