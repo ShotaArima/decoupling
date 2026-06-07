@@ -132,3 +132,52 @@ runs/2-Exp-17_freshretailnet_hour_component_validation/<scenario>/seed_<seed>/<m
 一方、`same_hour_recent_mean_d7_all` や `weekday_same_hour_mean_all` で改善が小さい場合は、強い baseline が day/hour 構造を先に吸収してしまい、分離表現の学習余地が小さくなるという 2-Exp-16 の解釈を補強する。
 
 論文では、FreshRetailNet を主張の中心ではなく、外部妥当性と適用条件の実験として置く。2-Exp-17 はその中で「どの target なら実データでも効果が出るか」を示す本実験になる。
+
+## 結果メモ
+
+5 seed の平均では、`series_mean_all` と `store_third_category_series_mean_repro_top` の両方で安定した改善が出た。
+
+| scenario | model | baseline MAE | corrected MAE | high residual baseline MAE | high residual corrected MAE | residual R2 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `series_mean_all` | `output_decomp_centered` | 0.0697 | 0.0506 | 0.2788 | 0.2061 | 0.3767 |
+| `series_mean_all` | `output_decomp_bias_loss_calibrated` | 0.0697 | 0.0507 | 0.2788 | 0.2000 | 0.3894 |
+| `store_third_category_series_mean_repro_top` | `output_decomp_centered` | 0.0811 | 0.0643 | 0.3138 | 0.2509 | 0.2600 |
+| `store_third_category_series_mean_repro_top` | `output_decomp_bias_loss_calibrated` | 0.0811 | 0.0650 | 0.3138 | 0.2545 | 0.2380 |
+| `same_hour_recent_mean_d7_all` | `output_decomp_centered` | 0.0580 | 0.0561 | 0.2534 | 0.2403 | 0.0862 |
+| `weekday_same_hour_mean_all` | `output_decomp_centered` | 0.0420 | 0.0424 | 0.1955 | 0.1955 | 0.0021 |
+
+解釈:
+
+- `series_mean_all` は 5 seed でも最も安定して改善した。
+- 店舗第三カテゴリ集約でも改善し、店舗商品より粗い粒度で残差構造が見えるという 2-Exp-16 の結果を補強した。
+- `same_hour_recent_mean_d7_all` は改善するが小さい。強い baseline が残差構造を先に吸収している。
+- `weekday_same_hour_mean_all` はほぼ改善せず、負例として使える。
+
+hour 成分の寄与も明確だった。
+
+| scenario | model | without global delta | without day delta | without hour delta | without interaction delta | hour profile corr |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `series_mean_all` | `output_decomp_centered` | 0.0049 | 0.0013 | 0.0099 | 0.0007 | 0.9934 |
+| `series_mean_all` | `output_decomp_bias_loss_calibrated` | 0.0042 | 0.0021 | 0.0115 | 0.0013 | 0.9901 |
+| `store_third_category_series_mean_repro_top` | `output_decomp_centered` | 0.0033 | 0.0002 | 0.0096 | 0.0000 | 0.9857 |
+| `store_third_category_series_mean_repro_top` | `output_decomp_bias_loss_calibrated` | 0.0032 | 0.0001 | 0.0094 | 0.0000 | 0.9857 |
+| `same_hour_recent_mean_d7_all` | `output_decomp_centered` | 0.0010 | 0.0022 | 0.0006 | 0.0017 | -0.8772 |
+| `weekday_same_hour_mean_all` | `output_decomp_centered` | -0.0003 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+
+解釈:
+
+- `series_mean_all` と店舗第三カテゴリでは、hour 成分を消すと MAE が最も悪化する。
+- hour component と residual hour profile の相関も約 0.99 で、単なる偶然の改善ではない。
+- `same_hour_recent_mean_d7_all` では hour profile 相関が負になっており、基準成分が hour 構造を吸収した後の残差には、同じ意味の hour 成分が残っていない。
+
+注意点:
+
+- raw の `corrected_cell_bias` は大きく負に寄る。
+- `series_mean_all / output_decomp_centered` で約 -0.257、`output_decomp_bias_loss_calibrated` でも約 -0.182。
+- 既存の validation bias calibration は bias を縮めるが、全体 MAE は raw より悪化することがある。
+
+現時点の結論:
+
+FreshRetailNet でも、`series_mean` target なら hour 残差構造を学習できる。これは 2-Exp-17 の主成功である。
+
+ただし、予測補正として使うには raw の `r_hat` をそのまま足すだけでは bias が大きい。次は `2-Exp-18` として、validation 上で `r_hat` の大きさと bias を調整する calibration / shrinkage を検証する。

@@ -362,6 +362,11 @@ def residual_prediction_bias(arrays: dict[str, np.ndarray]) -> float:
     return _observed_mean(arrays["residual_hat"] - arrays["residual"], arrays["observed"])
 
 
+def _observed_pair(arrays: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    keep = arrays["observed"] > 0
+    return arrays["residual_hat"][keep], arrays["residual"][keep]
+
+
 def calibrated_residual_metrics(
     valid_arrays: dict[str, np.ndarray],
     test_arrays: dict[str, np.ndarray],
@@ -372,12 +377,55 @@ def calibrated_residual_metrics(
     mode = str(calibration_cfg.get("mode", "validation_residual_bias"))
     adjusted = dict(test_arrays)
     bias = 0.0
+    alpha = 1.0
+    validation_mae = 0.0
     if mode == "validation_residual_bias":
         bias = residual_prediction_bias(valid_arrays)
         adjusted["residual_hat"] = test_arrays["residual_hat"] - bias
+        alpha = 1.0
+        validation_mae = residual_metrics({**valid_arrays, "residual_hat": valid_arrays["residual_hat"] - bias})["residual_mae"]
+    elif mode == "validation_affine_residual":
+        pred_valid, residual_valid = _observed_pair(valid_arrays)
+        pred_mean = float(np.mean(pred_valid)) if pred_valid.size else 0.0
+        residual_mean = float(np.mean(residual_valid)) if residual_valid.size else 0.0
+        denom = float(np.mean(np.square(pred_valid - pred_mean))) if pred_valid.size else 0.0
+        if denom > 1e-12:
+            alpha = float(np.mean((pred_valid - pred_mean) * (residual_valid - residual_mean)) / denom)
+        else:
+            alpha = 0.0
+        alpha = float(np.clip(alpha, float(calibration_cfg.get("min_alpha", 0.0)), float(calibration_cfg.get("max_alpha", 1.5))))
+        bias = residual_mean - alpha * pred_mean
+        adjusted["residual_hat"] = alpha * test_arrays["residual_hat"] + bias
+        validation_mae = residual_metrics({**valid_arrays, "residual_hat": alpha * valid_arrays["residual_hat"] + bias})["residual_mae"]
+    elif mode == "validation_mae_grid":
+        pred_valid, residual_valid = _observed_pair(valid_arrays)
+        alpha_grid = calibration_cfg.get("alpha_grid")
+        if alpha_grid is None:
+            alpha_grid = [round(value * 0.05, 2) for value in range(0, 31)]
+        best_score = float("inf")
+        best_alpha = 1.0
+        best_bias = 0.0
+        estimator = str(calibration_cfg.get("bias_estimator", "median"))
+        for alpha_candidate in [float(value) for value in alpha_grid]:
+            residual_error = residual_valid - alpha_candidate * pred_valid
+            if residual_error.size:
+                bias_candidate = float(np.median(residual_error) if estimator == "median" else np.mean(residual_error))
+                score = float(np.mean(np.abs(alpha_candidate * pred_valid + bias_candidate - residual_valid)))
+            else:
+                bias_candidate = 0.0
+                score = 0.0
+            if score < best_score:
+                best_score = score
+                best_alpha = alpha_candidate
+                best_bias = bias_candidate
+        alpha = best_alpha
+        bias = best_bias
+        validation_mae = best_score
+        adjusted["residual_hat"] = alpha * test_arrays["residual_hat"] + bias
     elif mode == "test_oracle_residual_bias":
         bias = residual_prediction_bias(test_arrays)
         adjusted["residual_hat"] = test_arrays["residual_hat"] - bias
+        alpha = 1.0
     elif mode == "none":
         adjusted["residual_hat"] = test_arrays["residual_hat"].copy()
     else:
@@ -393,6 +441,8 @@ def calibrated_residual_metrics(
     metrics.update(component_ablation_metrics(adjusted))
     metrics.update(hour_profile_metrics(adjusted))
     metrics["calibration_residual_bias"] = bias
+    metrics["calibration_alpha"] = alpha
+    metrics["calibration_validation_mae"] = validation_mae
     return {f"calibrated_{key}": value for key, value in metrics.items()}
 
 
