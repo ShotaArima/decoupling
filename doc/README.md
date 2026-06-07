@@ -30,4 +30,4 @@
 | 2-Exp-22 | [2-Exp-22_synthetic_difficulty_final.md](2-Exp-22_synthetic_difficulty_final.md) | Synthetic での成分回復と失敗条件の最終表 |
 | 2-Exp-23 | [2-Exp-23_paper_tables.md](2-Exp-23_paper_tables.md) | 論文用 final table の自動集約 |
 | 2-Exp-24 | [2-Exp-24_freshretailnet_scale_sensitivity.md](2-Exp-24_freshretailnet_scale_sensitivity.md) | FreshRetailNet の系列数感度確認 |
-| Proposal | [proposal/README.md](proposal/README.md) | 残差直交分解に基づく論文化方針、数理保証、実験計画 |
+

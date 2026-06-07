@@ -1,0 +1,66 @@
+{
+  "analysis": {
+    "summary_path": "runs/2-Exp-19_freshretailnet_bias_constrained_calibration/summary.json",
+    "output_dir": "runs/2-Exp-20_statistical_validation",
+    "seed": 17,
+    "confidence": 0.95,
+    "n_bootstrap": 10000,
+    "scenarios": [
+      "series_mean_all",
+      "store_third_category_series_mean_repro_top",
+      "same_hour_recent_mean_d7_all"
+    ],
+    "models": [
+      "centered_raw",
+      "mae_grid_reference",
+      "affine_reference",
+      "bias_constrained_001",
+      "bias_constrained_0025",
+      "weighted_bias_05"
+    ],
+    "baseline_delta_metrics": [
+      "corrected_cell_mae",
+      "calibrated_corrected_cell_mae",
+      "high_residual_top10_corrected_mae",
+      "calibrated_high_residual_top10_corrected_mae"
+    ],
+    "model_comparison_metrics": [
+      "calibrated_corrected_cell_mae",
+      "calibrated_corrected_cell_bias",
+      "calibrated_high_residual_top10_corrected_mae",
+      "calibrated_calibration_validation_prediction_bias"
+    ],
+    "model_comparisons": [
+      {
+        "scenario": "series_mean_all",
+        "left": "bias_constrained_001",
+        "right": "mae_grid_reference"
+      },
+      {
+        "scenario": "series_mean_all",
+        "left": "bias_constrained_001",
+        "right": "affine_reference"
+      },
+      {
+        "scenario": "store_third_category_series_mean_repro_top",
+        "left": "bias_constrained_001",
+        "right": "mae_grid_reference"
+      },
+      {
+        "scenario": "store_third_category_series_mean_repro_top",
+        "left": "bias_constrained_001",
+        "right": "affine_reference"
+      },
+      {
+        "scenario": "same_hour_recent_mean_d7_all",
+        "left": "bias_constrained_001",
+        "right": "mae_grid_reference"
+      },
+      {
+        "scenario": "same_hour_recent_mean_d7_all",
+        "left": "bias_constrained_001",
+        "right": "affine_reference"
+      }
+    ]
+  }
+}
