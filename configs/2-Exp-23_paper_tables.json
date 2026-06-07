@@ -21,7 +21,7 @@
         "models": [
           "mae_grid_reference",
           "bias_constrained_001",
-          "bias_constrained_002"
+          "bias_constrained_0025"
         ]
       },
       "statistical_validation": {
