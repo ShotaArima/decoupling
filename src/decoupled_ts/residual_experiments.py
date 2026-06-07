@@ -367,6 +367,40 @@ def _observed_pair(arrays: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarra
     return arrays["residual_hat"][keep], arrays["residual"][keep]
 
 
+def _calibration_bias(residual_hat: np.ndarray, residual: np.ndarray) -> float:
+    if residual_hat.size == 0:
+        return 0.0
+    return float(np.mean(residual_hat - residual))
+
+
+def _calibration_candidate_metrics(
+    pred_valid: np.ndarray,
+    residual_valid: np.ndarray,
+    alpha: float,
+    bias: float,
+) -> dict[str, float]:
+    if residual_valid.size == 0:
+        return {"mae": 0.0, "bias": 0.0, "high_residual_top10_mae": 0.0}
+    pred = alpha * pred_valid + bias
+    abs_error = np.abs(pred - residual_valid)
+    abs_residual = np.abs(residual_valid)
+    threshold = float(np.quantile(abs_residual, 0.9)) if abs_residual.size else 0.0
+    high = abs_residual >= threshold
+    return {
+        "mae": float(np.mean(abs_error)),
+        "bias": _calibration_bias(pred, residual_valid),
+        "high_residual_top10_mae": float(np.mean(abs_error[high])) if high.any() else 0.0,
+    }
+
+
+def _estimate_calibration_bias(residual_error: np.ndarray, estimator: str) -> float:
+    if residual_error.size == 0:
+        return 0.0
+    if estimator == "median":
+        return float(np.median(residual_error))
+    return float(np.mean(residual_error))
+
+
 def calibrated_residual_metrics(
     valid_arrays: dict[str, np.ndarray],
     test_arrays: dict[str, np.ndarray],
@@ -379,11 +413,18 @@ def calibrated_residual_metrics(
     bias = 0.0
     alpha = 1.0
     validation_mae = 0.0
+    validation_bias = 0.0
+    validation_high_residual_top10_mae = 0.0
+    constraint_satisfied: float | None = None
     if mode == "validation_residual_bias":
         bias = residual_prediction_bias(valid_arrays)
         adjusted["residual_hat"] = test_arrays["residual_hat"] - bias
         alpha = 1.0
-        validation_mae = residual_metrics({**valid_arrays, "residual_hat": valid_arrays["residual_hat"] - bias})["residual_mae"]
+        pred_valid, residual_valid = _observed_pair({**valid_arrays, "residual_hat": valid_arrays["residual_hat"] - bias})
+        candidate = _calibration_candidate_metrics(pred_valid, residual_valid, 1.0, 0.0)
+        validation_mae = candidate["mae"]
+        validation_bias = candidate["bias"]
+        validation_high_residual_top10_mae = candidate["high_residual_top10_mae"]
     elif mode == "validation_affine_residual":
         pred_valid, residual_valid = _observed_pair(valid_arrays)
         pred_mean = float(np.mean(pred_valid)) if pred_valid.size else 0.0
@@ -396,7 +437,10 @@ def calibrated_residual_metrics(
         alpha = float(np.clip(alpha, float(calibration_cfg.get("min_alpha", 0.0)), float(calibration_cfg.get("max_alpha", 1.5))))
         bias = residual_mean - alpha * pred_mean
         adjusted["residual_hat"] = alpha * test_arrays["residual_hat"] + bias
-        validation_mae = residual_metrics({**valid_arrays, "residual_hat": alpha * valid_arrays["residual_hat"] + bias})["residual_mae"]
+        candidate = _calibration_candidate_metrics(pred_valid, residual_valid, alpha, bias)
+        validation_mae = candidate["mae"]
+        validation_bias = candidate["bias"]
+        validation_high_residual_top10_mae = candidate["high_residual_top10_mae"]
     elif mode == "validation_mae_grid":
         pred_valid, residual_valid = _observed_pair(valid_arrays)
         alpha_grid = calibration_cfg.get("alpha_grid")
@@ -408,12 +452,8 @@ def calibrated_residual_metrics(
         estimator = str(calibration_cfg.get("bias_estimator", "median"))
         for alpha_candidate in [float(value) for value in alpha_grid]:
             residual_error = residual_valid - alpha_candidate * pred_valid
-            if residual_error.size:
-                bias_candidate = float(np.median(residual_error) if estimator == "median" else np.mean(residual_error))
-                score = float(np.mean(np.abs(alpha_candidate * pred_valid + bias_candidate - residual_valid)))
-            else:
-                bias_candidate = 0.0
-                score = 0.0
+            bias_candidate = _estimate_calibration_bias(residual_error, estimator)
+            score = _calibration_candidate_metrics(pred_valid, residual_valid, alpha_candidate, bias_candidate)["mae"]
             if score < best_score:
                 best_score = score
                 best_alpha = alpha_candidate
@@ -422,12 +462,93 @@ def calibrated_residual_metrics(
         bias = best_bias
         validation_mae = best_score
         adjusted["residual_hat"] = alpha * test_arrays["residual_hat"] + bias
+        candidate = _calibration_candidate_metrics(pred_valid, residual_valid, alpha, bias)
+        validation_bias = candidate["bias"]
+        validation_high_residual_top10_mae = candidate["high_residual_top10_mae"]
+    elif mode == "validation_bias_constrained_mae_grid":
+        pred_valid, residual_valid = _observed_pair(valid_arrays)
+        alpha_grid = calibration_cfg.get("alpha_grid")
+        if alpha_grid is None:
+            alpha_grid = [round(value * 0.05, 2) for value in range(0, 31)]
+        estimator = str(calibration_cfg.get("bias_estimator", "median"))
+        max_abs_bias = float(calibration_cfg.get("max_abs_validation_bias", 0.02))
+        best_tuple: tuple[float, float, float, float, float] | None = None
+        best_fallback: tuple[float, float, float, float, float] | None = None
+        for alpha_candidate in [float(value) for value in alpha_grid]:
+            residual_error = residual_valid - alpha_candidate * pred_valid
+            bias_candidate = _estimate_calibration_bias(residual_error, estimator)
+            candidate = _calibration_candidate_metrics(pred_valid, residual_valid, alpha_candidate, bias_candidate)
+            cand_tuple = (
+                candidate["mae"],
+                abs(candidate["bias"]),
+                candidate["high_residual_top10_mae"],
+                alpha_candidate,
+                bias_candidate,
+            )
+            fallback_tuple = (
+                abs(candidate["bias"]),
+                candidate["mae"],
+                candidate["high_residual_top10_mae"],
+                alpha_candidate,
+                bias_candidate,
+            )
+            if abs(candidate["bias"]) <= max_abs_bias and (best_tuple is None or cand_tuple < best_tuple):
+                best_tuple = cand_tuple
+            if best_fallback is None or fallback_tuple < best_fallback:
+                best_fallback = fallback_tuple
+        constraint_satisfied = 1.0 if best_tuple is not None else 0.0
+        chosen = best_tuple if best_tuple is not None else best_fallback
+        if chosen is None:
+            alpha = 1.0
+            bias = 0.0
+            validation_mae = 0.0
+        else:
+            if best_tuple is not None:
+                validation_mae, _, validation_high_residual_top10_mae, alpha, bias = chosen
+            else:
+                _, validation_mae, validation_high_residual_top10_mae, alpha, bias = chosen
+            candidate = _calibration_candidate_metrics(pred_valid, residual_valid, alpha, bias)
+            validation_bias = candidate["bias"]
+            validation_high_residual_top10_mae = candidate["high_residual_top10_mae"]
+        adjusted["residual_hat"] = alpha * test_arrays["residual_hat"] + bias
+    elif mode == "validation_weighted_mae_bias_grid":
+        pred_valid, residual_valid = _observed_pair(valid_arrays)
+        alpha_grid = calibration_cfg.get("alpha_grid")
+        if alpha_grid is None:
+            alpha_grid = [round(value * 0.05, 2) for value in range(0, 31)]
+        estimator = str(calibration_cfg.get("bias_estimator", "median"))
+        bias_weight = float(calibration_cfg.get("bias_weight", 1.0))
+        high_residual_weight = float(calibration_cfg.get("high_residual_weight", 0.0))
+        best_score = float("inf")
+        for alpha_candidate in [float(value) for value in alpha_grid]:
+            residual_error = residual_valid - alpha_candidate * pred_valid
+            bias_candidate = _estimate_calibration_bias(residual_error, estimator)
+            candidate = _calibration_candidate_metrics(pred_valid, residual_valid, alpha_candidate, bias_candidate)
+            score = candidate["mae"] + bias_weight * abs(candidate["bias"]) + high_residual_weight * candidate["high_residual_top10_mae"]
+            if score < best_score:
+                best_score = score
+                alpha = alpha_candidate
+                bias = bias_candidate
+                validation_mae = candidate["mae"]
+                validation_bias = candidate["bias"]
+                validation_high_residual_top10_mae = candidate["high_residual_top10_mae"]
+        adjusted["residual_hat"] = alpha * test_arrays["residual_hat"] + bias
     elif mode == "test_oracle_residual_bias":
         bias = residual_prediction_bias(test_arrays)
         adjusted["residual_hat"] = test_arrays["residual_hat"] - bias
         alpha = 1.0
+        pred_valid, residual_valid = _observed_pair(valid_arrays)
+        candidate = _calibration_candidate_metrics(pred_valid, residual_valid, alpha, -bias)
+        validation_mae = candidate["mae"]
+        validation_bias = candidate["bias"]
+        validation_high_residual_top10_mae = candidate["high_residual_top10_mae"]
     elif mode == "none":
         adjusted["residual_hat"] = test_arrays["residual_hat"].copy()
+        pred_valid, residual_valid = _observed_pair(valid_arrays)
+        candidate = _calibration_candidate_metrics(pred_valid, residual_valid, alpha, bias)
+        validation_mae = candidate["mae"]
+        validation_bias = candidate["bias"]
+        validation_high_residual_top10_mae = candidate["high_residual_top10_mae"]
     else:
         raise ValueError(f"unknown calibration mode: {mode}")
     clip_quantile = calibration_cfg.get("clip_residual_quantile")
@@ -443,6 +564,10 @@ def calibrated_residual_metrics(
     metrics["calibration_residual_bias"] = bias
     metrics["calibration_alpha"] = alpha
     metrics["calibration_validation_mae"] = validation_mae
+    metrics["calibration_validation_prediction_bias"] = validation_bias
+    metrics["calibration_validation_high_residual_top10_mae"] = validation_high_residual_top10_mae
+    if constraint_satisfied is not None:
+        metrics["calibration_constraint_satisfied"] = constraint_satisfied
     return {f"calibrated_{key}": value for key, value in metrics.items()}
 
 

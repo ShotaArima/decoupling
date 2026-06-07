@@ -24,4 +24,5 @@
 | 2-Exp-16 | [2-Exp-16_residual_target_sensitivity.md](2-Exp-16_residual_target_sensitivity.md) | FreshRetailNet の residual target 感度、再現性 subset、集約粒度の比較 |
 | 2-Exp-17 | [2-Exp-17_freshretailnet_hour_component_validation.md](2-Exp-17_freshretailnet_hour_component_validation.md) | FreshRetailNet での `series_mean` 残差と hour 成分寄与の 5 seed 検証 |
 | 2-Exp-18 | [2-Exp-18_calibration_shrinkage.md](2-Exp-18_calibration_shrinkage.md) | FreshRetailNet 残差補正の validation calibration と shrinkage |
+| 2-Exp-19 | [2-Exp-19_bias_constrained_calibration.md](2-Exp-19_bias_constrained_calibration.md) | FreshRetailNet 残差補正における bias 制約つき calibration |
 | Proposal | [proposal/README.md](proposal/README.md) | 残差直交分解に基づく論文化方針、数理保証、実験計画 |
