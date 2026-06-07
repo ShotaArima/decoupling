@@ -1,0 +1,29 @@
+{
+  "analysis": {
+    "summary_path": "runs/2-Exp-19_smoke/summary.json",
+    "output_dir": "runs/2-Exp-20_statistical_validation_smoke",
+    "seed": 17,
+    "confidence": 0.95,
+    "n_bootstrap": 1000,
+    "scenarios": ["series_mean"],
+    "models": ["centered_raw", "mae_grid_reference", "bias_constrained_001"],
+    "baseline_delta_metrics": [
+      "corrected_cell_mae",
+      "calibrated_corrected_cell_mae",
+      "high_residual_top10_corrected_mae",
+      "calibrated_high_residual_top10_corrected_mae"
+    ],
+    "model_comparison_metrics": [
+      "calibrated_corrected_cell_mae",
+      "calibrated_corrected_cell_bias",
+      "calibrated_high_residual_top10_corrected_mae"
+    ],
+    "model_comparisons": [
+      {
+        "scenario": "series_mean",
+        "left": "bias_constrained_001",
+        "right": "mae_grid_reference"
+      }
+    ]
+  }
+}

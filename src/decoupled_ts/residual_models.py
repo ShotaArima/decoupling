@@ -177,3 +177,88 @@ class ResidualMultiGrainAE(nn.Module):
 def residual_decouple_penalty(out: dict[str, torch.Tensor]) -> torch.Tensor:
     parts = [out.get("z_global"), out.get("z_local"), out.get("z_day"), out.get("z_hour")]
     return covariance_penalty([part for part in parts if part is not None])
+
+
+class OutputDecompositionResidualModel(nn.Module):
+    """Residual model that decodes separate global/day/hour/interaction output components."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        days: int,
+        hours: int,
+        hidden_dim: int,
+        global_dim: int,
+        day_dim: int,
+        hour_dim: int,
+        interaction_dim: int,
+        dropout: float = 0.1,
+        center_components: bool = True,
+        use_interaction: bool = True,
+    ):
+        super().__init__()
+        self.days = days
+        self.hours = hours
+        self.center_components = center_components
+        self.use_interaction = use_interaction
+        self.global_encoder = GlobalEncoder(input_dim, hidden_dim, global_dim)
+        self.day_encoder = DayEncoder(input_dim, hidden_dim, day_dim)
+        self.hour_encoder = HourEncoder(input_dim, hidden_dim, hour_dim)
+        self.interaction_encoder = InteractionEncoder(day_dim, hour_dim, hidden_dim, interaction_dim)
+        self.global_head = nn.Sequential(nn.Linear(global_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout), nn.Linear(hidden_dim, 1))
+        self.day_head = nn.Sequential(nn.Linear(day_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout), nn.Linear(hidden_dim, 1))
+        self.hour_head = nn.Sequential(nn.Linear(hour_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout), nn.Linear(hidden_dim, 1))
+        self.interaction_head = nn.Sequential(nn.Linear(interaction_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout), nn.Linear(hidden_dim, 1))
+
+    def encode(self, x: torch.Tensor, mask: torch.Tensor) -> dict[str, torch.Tensor]:
+        grid = flatten_to_grid(x)
+        mask_grid = flatten_to_grid(mask)
+        z_global = self.global_encoder(grid, mask_grid)
+        z_day = self.day_encoder(grid, mask_grid)
+        z_hour = self.hour_encoder(grid, mask_grid)
+        z_interaction = self.interaction_encoder(z_day, z_hour)
+        return {
+            "grid": grid,
+            "mask_grid": mask_grid,
+            "z_global": z_global,
+            "z_day": z_day,
+            "z_hour": z_hour,
+            "z_interaction": z_interaction,
+        }
+
+    def decode_from_encoded(self, encoded: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        batch = encoded["grid"].shape[0]
+        g_scalar = self.global_head(encoded["z_global"]).reshape(batch, 1, 1)
+        global_component = g_scalar.expand(batch, self.days, self.hours)
+        day_component = self.day_head(encoded["z_day"]).squeeze(-1)[:, :, None].expand(batch, self.days, self.hours)
+        hour_component = self.hour_head(encoded["z_hour"]).squeeze(-1)[:, None, :].expand(batch, self.days, self.hours)
+        if self.use_interaction:
+            interaction_component = self.interaction_head(encoded["z_interaction"]).squeeze(-1)
+        else:
+            interaction_component = torch.zeros_like(global_component)
+        if self.center_components:
+            day_component = day_component - day_component.mean(dim=1, keepdim=True)
+            hour_component = hour_component - hour_component.mean(dim=2, keepdim=True)
+            interaction_component = interaction_component - interaction_component.mean(dim=1, keepdim=True)
+            interaction_component = interaction_component - interaction_component.mean(dim=2, keepdim=True)
+        residual_hat = global_component + day_component + hour_component + interaction_component
+        return {
+            "global_component": global_component,
+            "day_component": day_component,
+            "hour_component": hour_component,
+            "interaction_component": interaction_component,
+            "residual_hat": residual_hat,
+        }
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> dict[str, torch.Tensor]:
+        encoded = self.encode(x, mask)
+        decoded = self.decode_from_encoded(encoded)
+        return {
+            **decoded,
+            "grid": encoded["grid"],
+            "mask_grid": encoded["mask_grid"],
+            "z_global": encoded["z_global"],
+            "z_day": encoded["z_day"],
+            "z_hour": encoded["z_hour"],
+            "z_interaction": encoded["z_interaction"],
+        }

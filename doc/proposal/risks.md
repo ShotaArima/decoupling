@@ -7,9 +7,14 @@
 これまでの実験でも、same-hour baseline は非常に強かった。
 そのため、$b+\hat r$ が $b$ を全体平均で超えない可能性は高い。
 
+2-Exp-23 時点では、このリスクは半分現実化し、半分解消した。
+
+- `series_mean_all` では baseline 改善が明確に出た。
+- `same_hour_recent_mean_d7_all` では改善が小さく、calibration 後に全体 MAE が悪化する条件もある。
+
 ### 対応
 
-主張を予測補正から、解釈可能な残差分解に寄せる。
+主張を「全ての baseline を上回る予測器」ではなく、「残差構造が残る条件で有効な補正・分解」に寄せる。
 
 成功条件を、
 
@@ -24,6 +29,7 @@ component recovery
 leakage reduction
 factor subset ablation
 high residual subset 改善
+residual target ごとの成立条件
 ```
 
 に置く。
@@ -31,6 +37,8 @@ high residual subset 改善
 ## 2. R2: hour / interaction が分離しない
 
 2-Exp-10 では、day は少し見えたが、hour と interaction は弱かった。
+
+2-Exp-17〜23 で、hour については `series_mean_all` で解消した。一方、interaction については FreshRetailNet で強く主張できるほどの結果はまだない。
 
 ### 原因候補
 
@@ -47,9 +55,19 @@ high residual subset 改善
 - FreshRetailNet では interaction 主張を弱める。
 - 論文では day/hour/interaction のうち、成立する成分を中心に主張する。
 
+現時点の方針:
+
+```text
+実データの主成功例は hour component とする。
+interaction component は synthetic での成立条件として示し、FreshRetailNet では limitation として扱う。
+```
+
 ## 3. R3: leakage suppression で再構成が壊れる
 
 情報漏れを抑えすぎると、必要な情報まで消える可能性がある。
+
+2-Exp-23 時点では、leakage suppression は本文の主軸から外してよい。
+主提案は output decomposition + centering であり、leakage suppression は appendix または今後課題に回す。
 
 ### 対応
 
@@ -62,6 +80,12 @@ high residual subset 改善
 
 これは十分あり得る。
 
+2-Exp-23 時点の結果は、このリスクを「失敗」ではなく「適用条件」として書ける状態である。
+
+- synthetic では成分回復が強い。
+- FreshRetailNet では `series_mean_all` で成功する。
+- FreshRetailNet の `same_hour_recent_mean_d7_all` では効果が小さい。
+
 ### 対応
 
 この場合、論文の主張を以下にする。
@@ -73,7 +97,7 @@ high residual subset 改善
 ```
 
 この主張でも修士論文としては成立する。
-投稿論文としては、real での改善が弱い場合はやや厳しい。
+投稿論文としては、real での改善が `series_mean_all` に限定されるため、主張を過大にしないことが重要である。
 
 ## 5. R5: 数理保証が弱く見える
 
@@ -97,6 +121,10 @@ latent が一意に識別される
 
 にする。
 
+2-Exp-22 の結果により、この方針は実験的にも支持された。
+
+`output_decomp_no_center` は residual MAE だけなら極端に悪くないが、成分 corr が崩れた。したがって、出力制約がなければ「当たるが読めない」状態になることを示せる。
+
 ## 6. 縮退案
 
 ### Plan A
@@ -105,17 +133,23 @@ latent が一意に識別される
 
 これは最も強い。
 
+現時点では、leakage suppression までは主張しないため Plan A からは少し弱める。
+
 ### Plan B
 
 FreshRetailNet の予測補正は弱いが、leakage と ablation が改善する。
 
 この場合は、解釈可能な残差分解として主張する。
 
+現時点の主ラインは Plan B に近いが、`series_mean_all` では予測補正も確認できている。
+
 ### Plan C
 
 synthetic では強く、FreshRetailNet では弱い。
 
 この場合は、実データで暗黙的分離が難しいことを示す失敗分析型の修士論文にする。
+
+現時点では Plan C より強い。FreshRetailNet でも target を選べば改善と hour component が出ている。
 
 ### Plan D
 
@@ -127,7 +161,20 @@ synthetic では強く、FreshRetailNet では弱い。
 - 残差構造が弱い条件で、表現分離が成立しにくいことを示す。
 - synthetic-to-real gap を研究課題として整理する。
 
-## 7. 中止判断
+現時点では Plan D まで縮退する必要はない。
+
+## 7. 現時点の残リスク
+
+2-Exp-23 後に残っているリスクは次の 4 つである。
+
+| リスク | 現状 | 論文での扱い |
+|---|---|---|
+| FreshRetailNet 全体で常に勝つわけではない | `same_hour_recent_mean_d7_all` は改善が小さい | 適用条件として説明 |
+| real data interaction が弱い | synthetic では強いが real では主張しにくい | synthetic 中心、real は limitation |
+| 本文表が多すぎる | 2-Exp-23 の statistical table は 56 行 | 本文用と appendix 用に分ける |
+| target selection が恣意的に見える | `series_mean_all` が主成功例 | 2-Exp-16/23 の target sensitivity として説明 |
+
+## 8. 中止判断
 
 以下が 2026-07-31 時点で満たせない場合、投稿論文としての主張は弱くなる。
 
@@ -137,3 +184,4 @@ synthetic では強く、FreshRetailNet では弱い。
 
 この場合は、修士論文向けの失敗分析・設計提案に切り替える。
 
+2-Exp-23 時点では、synthetic component recovery と FreshRetailNet の `series_mean_all` 改善は満たしているため、中止判断には該当しない。
