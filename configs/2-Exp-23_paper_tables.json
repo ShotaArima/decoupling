@@ -1,0 +1,45 @@
+{
+  "paper_tables": {
+    "output_dir": "runs/2-Exp-23_paper_tables",
+    "tables": {
+      "synthetic_component_recovery": {
+        "kind": "synthetic_component_recovery",
+        "summary_path": "runs/2-Exp-22_synthetic_difficulty_final/summary.json",
+        "models": [
+          "output_decomp_centered",
+          "output_decomp_no_center",
+          "output_decomp_centered_no_interaction"
+        ]
+      },
+      "freshretail_correction": {
+        "kind": "freshretail_correction",
+        "summary_path": "runs/2-Exp-19_freshretailnet_bias_constrained_calibration/summary.json",
+        "scenarios": [
+          "series_mean_all",
+          "same_hour_recent_mean_d7_all"
+        ],
+        "models": [
+          "mae_grid_reference",
+          "bias_constrained_001",
+          "bias_constrained_002"
+        ]
+      },
+      "statistical_validation": {
+        "kind": "statistical_validation",
+        "summary_path": "runs/2-Exp-20_statistical_validation/summary.json",
+        "scenarios": [
+          "series_mean_all",
+          "same_hour_recent_mean_d7_all"
+        ],
+        "metrics": [
+          "corrected_cell_mae",
+          "calibrated_corrected_cell_mae",
+          "high_residual_top10_corrected_mae",
+          "calibrated_high_residual_top10_corrected_mae",
+          "corrected_cell_bias",
+          "calibrated_corrected_cell_bias"
+        ]
+      }
+    }
+  }
+}

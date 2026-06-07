@@ -14,6 +14,7 @@
 - 2-Exp-17〜19 で、FreshRetailNet でも `series_mean_all` とカテゴリ集約条件では baseline より低い MAE が出た。
 - 2-Exp-20 で、`series_mean_all` の baseline 改善は 5 seed の paired bootstrap でも 0 未満になった。
 - 2-Exp-21 で、`series_mean_all` は hour component が強く、`same_hour_recent_mean_d7_all` は hour component が薄いことを確認した。
+- 2-Exp-22 で、synthetic では `output_decomp_centered` が true component を高い相関で回復し、centering と interaction component の必要性も確認できた。
 - bias 制約つき calibration は bias を抑え、高残差上位 10% の改善を強める一方、全体 MAE は `mae_grid_reference` より悪化する。
 
 したがって、論文の主張は次に寄せるのが現実的である。
@@ -26,11 +27,10 @@ baseline 後の残差に残る day/hour 構造を分解し、
 
 ## あと必要な実験数
 
-最低限は残り 2 本。
+最低限は残り 1 本。
 
 | ID | 目的 | 必須度 |
 | --- | --- | --- |
-| `2-Exp-22` | synthetic difficulty の最終表を固定 | 必須 |
 | `2-Exp-23` | 論文用 final table を 1 つの summary に統合 | 必須 |
 
 余裕があれば追加で 2 本。
@@ -40,7 +40,7 @@ baseline 後の残差に残る day/hour 構造を分解し、
 | `2-Exp-24` | FreshRetailNet subset threshold の軽い感度確認 | 任意 |
 | `2-Exp-25` | ablation / leakage probe の appendix 用補強 | 任意 |
 
-つまり、論文 1 本の骨格には「あと 2 本」、査読耐性を上げるなら「あと 4 本」が目安。
+つまり、論文 1 本の骨格には「あと 1 本」、査読耐性を上げるなら「あと 3 本」が目安。
 
 ## Revised Week 1: 統計検証と採用モデル決定
 
@@ -87,7 +87,7 @@ baseline 後の残差に残る day/hour 構造を分解し、
 状態:
 
 ```text
-metrics は完了。visualization CSV からの図生成は scripts/plot_2_exp_21_heatmaps.py で対応済み。
+完了。visualization CSV からの図生成は scripts/plot_2_exp_21_heatmaps.py で対応済み。
 ```
 
 ## Revised Week 3: Synthetic 最終表
@@ -107,12 +107,18 @@ metrics は完了。visualization CSV からの図生成は scripts/plot_2_exp_2
 - noise / interaction / missing の条件別に、どこで成分分解が成立し、どこで失敗するかを表にできる。
 - true component がある synthetic で、同定可能性の主張を支える。
 
+状態:
+
+```text
+完了。output_decomp_centered は base で global/day/hour をほぼ完全に回復し、interaction も高く回復した。small_sample と high_noise では成分回復が落ち、失敗条件も表にできた。
+```
+
 ## Revised Week 4: Final Table 統合
 
 期間:
 
 ```text
-2026-06-28 〜 2026-07-04
+2026-06-08 〜 2026-06-14
 ```
 
 ### 実験
@@ -191,6 +197,12 @@ metrics は完了。visualization CSV からの図生成は scripts/plot_2_exp_2
 残差分解は解釈可能性と予測補正の両方に寄与する。
 ```
 
+現時点の位置:
+
+```text
+series_mean_all では Case A に寄せられる。ただし FreshRetailNet 全体で常に改善する主張にはしない。
+```
+
 #### Case B
 
 MAE の CI は弱いが、hour component / high residual / synthetic が強い。
@@ -213,4 +225,4 @@ FreshRetailNet の統計的改善が弱い。
 強い baseline 後の residual learning の限界を示す。
 ```
 
-現時点では Case B が最も現実的で、2-Exp-20 の結果次第で Case A に寄せられる。
+現時点では、synthetic は Case A 相当、FreshRetailNet は条件付き Case A / Case B として書くのが妥当である。

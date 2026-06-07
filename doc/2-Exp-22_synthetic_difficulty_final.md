@@ -100,6 +100,78 @@ runs/2-Exp-22_synthetic_difficulty_final/aggregate.csv
 runs/2-Exp-22_synthetic_difficulty_final/summary.json
 ```
 
+## 結果
+
+実行:
+
+```bash
+uv run decoupled-ts residual-sweep --config configs/2-Exp-22_synthetic_difficulty_final.json
+```
+
+seed:
+
+```text
+17, 23, 31, 47, 59
+```
+
+### 提案モデルの難易度別結果
+
+`output_decomp_centered` の集計。
+
+| scenario | residual MAE | residual R2 | total component MAE | global corr | day corr | hour corr | interaction corr | no global delta | no day delta | no hour delta | no interaction delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| base | 0.0965 | 0.9764 | 0.0311 | 0.9995 | 0.9979 | 0.9991 | 0.9654 | 0.3132 | 0.1930 | 0.5033 | 0.0228 |
+| low_interaction | 0.0959 | 0.9765 | 0.0300 | 0.9995 | 0.9977 | 0.9991 | 0.8211 | 0.3142 | 0.1941 | 0.5042 | 0.0029 |
+| high_interaction | 0.0969 | 0.9767 | 0.0315 | 0.9994 | 0.9982 | 0.9990 | 0.9890 | 0.3129 | 0.1927 | 0.5029 | 0.0625 |
+| high_noise | 0.2700 | 0.8428 | 0.0738 | 0.9990 | 0.9795 | 0.9948 | 0.8334 | 0.2776 | 0.1560 | 0.4609 | 0.0094 |
+| short_history | 0.0959 | 0.9764 | 0.0345 | 0.9993 | 0.9978 | 0.9985 | 0.9547 | 0.3045 | 0.1879 | 0.5000 | 0.0207 |
+| small_sample | 0.1461 | 0.9446 | 0.1129 | 0.9912 | 0.9801 | 0.9902 | 0.4252 | 0.2414 | 0.1321 | 0.4221 | 0.0012 |
+| high_stockout | 0.0983 | 0.9755 | 0.0359 | 0.9992 | 0.9975 | 0.9985 | 0.9637 | 0.3091 | 0.1879 | 0.4978 | 0.0207 |
+| low_hour_signal | 0.0951 | 0.9519 | 0.0260 | 0.9994 | 0.9983 | 0.9895 | 0.9800 | 0.3179 | 0.1973 | 0.1084 | 0.0256 |
+
+読み取り:
+
+- `base` では global/day/hour はほぼ完全に回復し、interaction も 0.9654 まで回復した。
+- `high_interaction` では interaction corr が 0.9890、interaction を消したときの MAE delta が 0.0625 まで上がった。interaction component が必要な条件で必要性が表に出ている。
+- `low_interaction` では interaction delta が 0.0029 まで落ちた。interaction が弱い条件では、interaction component の寄与が小さくなる。
+- `low_hour_signal` では hour delta が 0.1084 まで落ちた。hour signal を弱くすると hour component の寄与も小さくなる。
+- `high_noise` と `small_sample` では成分回復が落ちる。特に `small_sample` は interaction corr が 0.4252 まで落ち、相互作用成分はサンプル数に敏感である。
+
+### Centering と interaction component の比較
+
+| scenario | model | residual MAE | total component MAE | global corr | day corr | hour corr | interaction corr | no interaction delta |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| base | output_decomp_no_center | 0.1069 | 0.0495 | -0.8976 | 0.9597 | 0.8244 | 0.0262 | 0.1830 |
+| base | output_decomp_centered | 0.0965 | 0.0311 | 0.9995 | 0.9979 | 0.9991 | 0.9654 | 0.0228 |
+| base | output_decomp_centered_no_interaction | 0.1070 | 0.0509 | 0.9995 | 0.9972 | 0.9990 | 0.0000 | 0.0000 |
+| low_interaction | output_decomp_no_center | 0.0986 | 0.0351 | -0.9178 | 0.9602 | 0.8241 | 0.0055 | 0.1857 |
+| low_interaction | output_decomp_centered | 0.0959 | 0.0300 | 0.9995 | 0.9977 | 0.9991 | 0.8211 | 0.0029 |
+| low_interaction | output_decomp_centered_no_interaction | 0.0967 | 0.0317 | 0.9995 | 0.9977 | 0.9991 | 0.0000 | 0.0000 |
+| high_interaction | output_decomp_no_center | 0.1237 | 0.0716 | -0.5793 | 0.9589 | 0.8249 | 0.0861 | 0.1836 |
+| high_interaction | output_decomp_centered | 0.0969 | 0.0315 | 0.9994 | 0.9982 | 0.9990 | 0.9890 | 0.0625 |
+| high_interaction | output_decomp_centered_no_interaction | 0.1305 | 0.0840 | 0.9995 | 0.9910 | 0.9978 | 0.0000 | 0.0000 |
+| low_hour_signal | output_decomp_no_center | 0.1054 | 0.0467 | 0.9554 | 0.8800 | 0.4513 | 0.1428 | 0.0858 |
+| low_hour_signal | output_decomp_centered | 0.0951 | 0.0260 | 0.9994 | 0.9983 | 0.9895 | 0.9800 | 0.0256 |
+| low_hour_signal | output_decomp_centered_no_interaction | 0.1063 | 0.0487 | 0.9995 | 0.9978 | 0.9883 | 0.0000 | 0.0000 |
+
+読み取り:
+
+- `output_decomp_no_center` は residual MAE だけを見ると極端に悪くないが、global corr が負になり、interaction corr もほぼ崩れる。これは「当てること」と「成分として読めること」が別であることを示している。
+- `output_decomp_centered` は residual MAE と component MAE の両方で良く、成分 corr も高い。
+- `output_decomp_centered_no_interaction` は `low_interaction` では大きく悪化しないが、`base` と `high_interaction` では residual MAE と component MAE が悪化する。interaction がある条件では interaction component が必要である。
+
+## 結論
+
+2-Exp-22 は主成功条件を満たした。
+
+- true component がある synthetic では、`output_decomp_centered` が成分を回復できる。
+- centering は global/day/hour/interaction の解釈性に強く効く。
+- interaction component は、interaction が十分にある条件で必要になる。
+- low interaction / low hour signal では、対応する ablation delta が小さくなる。
+- high noise / small sample では成分回復が落ち、成立条件と失敗条件を説明できる。
+
+この結果により、論文では synthetic を「同定可能性と成立条件の主実験」として置ける。
+
 ## 論文上の位置づけ
 
 FreshRetailNet は外部妥当性と限界検証、synthetic は同定可能性と成立条件の主実験として扱う。
