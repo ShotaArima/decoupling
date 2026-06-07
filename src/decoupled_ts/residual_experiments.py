@@ -795,6 +795,121 @@ def save_latent_outputs(arrays: dict[str, np.ndarray], out_dir: Path, output_cfg
                 writer.writerow([hour, *[float(v) for v in row]])
 
 
+def _masked_profile(values: np.ndarray, observed: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
+    numerator = np.sum(values * observed, axis=axis)
+    denominator = np.clip(np.sum(observed, axis=axis), 1.0, None)
+    return numerator / denominator
+
+
+def _series_mae(error: np.ndarray, observed: np.ndarray) -> np.ndarray:
+    numerator = np.sum(np.abs(error) * observed, axis=(1, 2))
+    denominator = np.clip(np.sum(observed, axis=(1, 2)), 1.0, None)
+    return numerator / denominator
+
+
+def save_visualization_outputs(arrays: dict[str, np.ndarray], out_dir: Path, output_cfg: dict[str, Any]) -> None:
+    if not bool(output_cfg.get("save_visualization_tables", False)):
+        return
+    viz_dir = out_dir / "visualization"
+    viz_dir.mkdir(parents=True, exist_ok=True)
+    observed = arrays["observed"]
+    sales = arrays["sales"]
+    baseline = arrays["baseline"]
+    residual = arrays["residual"]
+    residual_hat = arrays["residual_hat"]
+    corrected = baseline + residual_hat
+    profile_sources = {
+        "residual": residual,
+        "residual_hat": residual_hat,
+        "baseline_abs_error": np.abs(baseline - sales),
+        "corrected_abs_error": np.abs(corrected - sales),
+    }
+    for key in ("global_component", "day_component", "hour_component", "interaction_component"):
+        if key in arrays:
+            profile_sources[key] = arrays[key]
+    with (viz_dir / "profiles_by_hour.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["source", "hour", "value"])
+        for source, values in profile_sources.items():
+            profile = _masked_profile(values, observed, axis=(0, 1))
+            for hour, value in enumerate(profile):
+                writer.writerow([source, hour, float(value)])
+    with (viz_dir / "profiles_by_day.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["source", "day", "value"])
+        for source, values in profile_sources.items():
+            profile = _masked_profile(values, observed, axis=(0, 2))
+            for day, value in enumerate(profile):
+                writer.writerow([source, day, float(value)])
+
+    baseline_mae = _series_mae(baseline - sales, observed)
+    corrected_mae = _series_mae(corrected - sales, observed)
+    residual_mae = _series_mae(residual_hat - residual, observed)
+    mean_abs_residual = _series_mae(residual, observed)
+    improvement = baseline_mae - corrected_mae
+    rows = []
+    for idx in range(sales.shape[0]):
+        rows.append(
+            {
+                "series_index": idx,
+                "subgroup": int(arrays["subgroup"][idx]) if "subgroup" in arrays else 0,
+                "observed_cells": float(np.sum(observed[idx])),
+                "baseline_mae": float(baseline_mae[idx]),
+                "corrected_mae": float(corrected_mae[idx]),
+                "improvement": float(improvement[idx]),
+                "residual_mae": float(residual_mae[idx]),
+                "mean_abs_residual": float(mean_abs_residual[idx]),
+            }
+        )
+    with (viz_dir / "series_summary.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()) if rows else ["series_index"])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    top_k = int(output_cfg.get("visualization_top_k", 3))
+    order_best = np.argsort(-improvement)[:top_k]
+    order_worst = np.argsort(improvement)[:top_k]
+    for group_name, indices in (("best", order_best), ("worst", order_worst)):
+        for rank, idx in enumerate(indices, start=1):
+            path = viz_dir / f"series_{group_name}_{rank:02d}.csv"
+            fieldnames = [
+                "day",
+                "hour",
+                "observed",
+                "sales",
+                "baseline",
+                "corrected",
+                "residual",
+                "residual_hat",
+                "baseline_abs_error",
+                "corrected_abs_error",
+            ]
+            for key in ("global_component", "day_component", "hour_component", "interaction_component"):
+                if key in arrays:
+                    fieldnames.append(key)
+            with path.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                for day in range(sales.shape[1]):
+                    for hour in range(sales.shape[2]):
+                        row = {
+                            "day": day,
+                            "hour": hour,
+                            "observed": float(observed[idx, day, hour]),
+                            "sales": float(sales[idx, day, hour]),
+                            "baseline": float(baseline[idx, day, hour]),
+                            "corrected": float(corrected[idx, day, hour]),
+                            "residual": float(residual[idx, day, hour]),
+                            "residual_hat": float(residual_hat[idx, day, hour]),
+                            "baseline_abs_error": float(abs(baseline[idx, day, hour] - sales[idx, day, hour])),
+                            "corrected_abs_error": float(abs(corrected[idx, day, hour] - sales[idx, day, hour])),
+                        }
+                        for key in ("global_component", "day_component", "hour_component", "interaction_component"):
+                            if key in arrays:
+                                row[key] = float(arrays[key][idx, day, hour])
+                        writer.writerow(row)
+
+
 def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device: torch.device, root_out: Path) -> dict[str, Any]:
     variant_config = dict(config)
     if "loss_overrides" in variant:
@@ -879,6 +994,7 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     if bool(output_cfg.get("save_residual_predictions", True)):
         save_residual_predictions(out_dir / "residual_predictions.csv", test_arrays)
     save_latent_outputs(test_arrays, out_dir, output_cfg)
+    save_visualization_outputs(test_arrays, out_dir, output_cfg)
     if not bool(output_cfg.get("save_checkpoints", True)) and best_path.exists():
         best_path.unlink()
     write_json(out_dir / "metrics.json", metrics)

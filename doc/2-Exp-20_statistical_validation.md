@@ -77,3 +77,45 @@ uv run decoupled-ts residual-result-analysis --config configs/2-Exp-20_statistic
 FreshRetailNet では series_mean residual に hour 構造が残り、提案分解はその構造を安定して抽出する。
 ただし calibration の目的関数により、全体 MAE、bias、高残差改善の間には trade-off がある。
 ```
+
+## 実行結果
+
+`series_mean_all` の主要結果は次の通り。
+
+| model | metric | baseline delta mean | 95% CI | improved runs |
+| --- | --- | ---: | ---: | ---: |
+| `mae_grid_reference` | `calibrated_corrected_cell_mae` | -0.0188 | [-0.0194, -0.0183] | 5/5 |
+| `mae_grid_reference` | `calibrated_high_residual_top10_corrected_mae` | -0.0661 | [-0.0720, -0.0621] | 5/5 |
+| `affine_reference` | `calibrated_corrected_cell_mae` | -0.0143 | [-0.0153, -0.0134] | 5/5 |
+| `affine_reference` | `calibrated_high_residual_top10_corrected_mae` | -0.0745 | [-0.0790, -0.0688] | 5/5 |
+| `bias_constrained_001` | `calibrated_corrected_cell_mae` | -0.0163 | [-0.0167, -0.0157] | 5/5 |
+| `bias_constrained_001` | `calibrated_high_residual_top10_corrected_mae` | -0.0874 | [-0.0905, -0.0842] | 5/5 |
+
+`bias_constrained_001` と代表 baseline の seed 対応比較は次の通り。
+
+| comparison | metric | mean left-right | 95% CI | left better |
+| --- | --- | ---: | ---: | ---: |
+| `bias_constrained_001 - mae_grid_reference` | `calibrated_corrected_cell_mae` | 0.0025 | [0.0017, 0.0033] | 0/5 |
+| `bias_constrained_001 - mae_grid_reference` | `calibrated_corrected_cell_bias` | -0.2695 | [-0.2971, -0.2419] | 5/5 |
+| `bias_constrained_001 - mae_grid_reference` | `calibrated_high_residual_top10_corrected_mae` | -0.0213 | [-0.0267, -0.0163] | 5/5 |
+| `bias_constrained_001 - affine_reference` | `calibrated_corrected_cell_mae` | -0.0019 | [-0.0032, -0.0006] | 4/5 |
+| `bias_constrained_001 - affine_reference` | `calibrated_corrected_cell_bias` | 0.0048 | [0.0032, 0.0066] | 0/5 |
+| `bias_constrained_001 - affine_reference` | `calibrated_high_residual_top10_corrected_mae` | -0.0129 | [-0.0197, -0.0060] | 5/5 |
+
+## 考察
+
+`series_mean_all` では、主要モデルすべてで baseline に対する改善 CI が 0 未満だった。したがって、FreshRetailNet でも条件を選べば予測補正として有効、という主張は可能である。
+
+ただし、どの calibration を主モデルにするかは目的次第で変わる。
+
+- 全体 MAE 最優先なら `mae_grid_reference`。
+- bias と high residual top10 を重視するなら `bias_constrained_001`。
+- bias 最小化だけなら `affine_reference` だが、全体 MAE は悪化する。
+
+論文本文では `bias_constrained_001` を「外れケースと bias を重視した補正器」として扱い、`mae_grid_reference` を全体 MAE の上限性能として併記するのが妥当である。
+
+## 次の実験
+
+2-Exp-20 で数値主張は固まり始めた。
+
+次は `2-Exp-21` として、hour profile と成功・失敗例の可視化を行う。これは新しい性能主張を増やすためではなく、論文図で「何を分解しているのか」を説明するための実験である。
