@@ -124,6 +124,12 @@
     "enabled": false,
     "weight": 0.05
   },
+  "output": {
+    "save_latent_arrays": false,
+    "save_residual_predictions": false,
+    "save_checkpoints": false,
+    "save_hour_heatmap": true
+  },
   "train": {
     "batch_size": 128,
     "epochs": 12,

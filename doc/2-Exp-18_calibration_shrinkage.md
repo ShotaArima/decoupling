@@ -132,6 +132,19 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-18_smoke.json
 uv run decoupled-ts residual-sweep --config configs/2-Exp-18_freshretailnet_calibration_shrinkage.json
 ```
 
+本実験 config では、ディスク容量を抑えるために大きい出力を保存しない。
+
+```json
+"output": {
+  "save_latent_arrays": false,
+  "save_residual_predictions": false,
+  "save_checkpoints": false,
+  "save_hour_heatmap": true
+}
+```
+
+これにより、`metrics.json`、`summary.json`、`aggregate.csv`、`all_results.csv`、小さい `z_hour_heatmap.csv` は残しつつ、容量を消費しやすい `*.npy`、cell-level prediction、checkpoint は保存しない。
+
 ## 見る指標
 
 - `corrected_cell_mae_mean`

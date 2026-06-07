@@ -640,28 +640,29 @@ def run_latent_probes(train_arrays: dict[str, np.ndarray], test_arrays: dict[str
     return metrics
 
 
-def save_latent_outputs(arrays: dict[str, np.ndarray], out_dir: Path) -> None:
-    for key in (
-        "z_global",
-        "z_local",
-        "z_day",
-        "z_hour",
-        "z_interaction",
-        "global_component",
-        "day_component",
-        "hour_component",
-        "interaction_component",
-        "true_global",
-        "true_day",
-        "true_hour",
-        "true_interaction",
-        "true_residual",
-        "noisy_true_residual",
-        "subgroup",
-    ):
-        if key in arrays:
-            np.save(out_dir / f"{key}.npy", arrays[key])
-    if "z_hour" in arrays:
+def save_latent_outputs(arrays: dict[str, np.ndarray], out_dir: Path, output_cfg: dict[str, Any]) -> None:
+    if bool(output_cfg.get("save_latent_arrays", True)):
+        for key in (
+            "z_global",
+            "z_local",
+            "z_day",
+            "z_hour",
+            "z_interaction",
+            "global_component",
+            "day_component",
+            "hour_component",
+            "interaction_component",
+            "true_global",
+            "true_day",
+            "true_hour",
+            "true_interaction",
+            "true_residual",
+            "noisy_true_residual",
+            "subgroup",
+        ):
+            if key in arrays:
+                np.save(out_dir / f"{key}.npy", arrays[key])
+    if bool(output_cfg.get("save_hour_heatmap", True)) and "z_hour" in arrays:
         with (out_dir / "z_hour_heatmap.csv").open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["hour", *[f"dim_{i}" for i in range(arrays["z_hour"].shape[-1])]])
@@ -683,6 +684,7 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
             **config.get("calibration", {}),
             **variant["calibration_overrides"],
         }
+    output_cfg = {**config.get("output", {}), **variant.get("output_overrides", {})}
     name = variant["name"]
     out_dir = root_out / name
     logger = setup_run_logger(out_dir, name=f"residual.{name}")
@@ -749,8 +751,11 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     metrics.update(calibrated_residual_metrics(valid_arrays, test_arrays, variant_config.get("calibration", {})))
     metrics.update(run_latent_probes(train_arrays, test_arrays, variant_config))
     metrics.update(evaluate_swap_diagnostics(model, test_loader, variant_config, device))
-    save_residual_predictions(out_dir / "residual_predictions.csv", test_arrays)
-    save_latent_outputs(test_arrays, out_dir)
+    if bool(output_cfg.get("save_residual_predictions", True)):
+        save_residual_predictions(out_dir / "residual_predictions.csv", test_arrays)
+    save_latent_outputs(test_arrays, out_dir, output_cfg)
+    if not bool(output_cfg.get("save_checkpoints", True)) and best_path.exists():
+        best_path.unlink()
     write_json(out_dir / "metrics.json", metrics)
     return {"name": name, "best_validation_score": best, "best_epoch": best_epoch, **metrics}
 
