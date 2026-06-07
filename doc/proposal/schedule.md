@@ -1,321 +1,204 @@
-# Schedule: 実験スケジュール
+# Schedule: 論文化までの残り実験計画
 
-## 前提
+## 現在地
 
-開始日を 2026-06-06 とする。
+更新日: 2026-06-07
 
-目的は、まず 8 週間で論文として成立するかを判断できる材料を揃えることである。
-その後、追加 4 週間で図表・統計・執筆に進む。
+当初の 12 週間計画のうち、実装と探索の多くは前倒しで進んでいる。
 
-全体として、12 週間で「投稿可能な原稿の骨格」まで持っていく計画にする。
+現時点で分かっていること:
 
-## Week 1: 設計固定と実装準備
+- synthetic では、成分を持つ残差に対して output decomposition が有効に働く。
+- FreshRetailNet では、`same_hour_recent_mean` のような強い baseline の残差は構造が薄い。
+- `series_mean` residual では hour 構造が残り、hour component の寄与が安定して大きい。
+- 2-Exp-17〜19 で、FreshRetailNet でも `series_mean_all` とカテゴリ集約条件では baseline より低い MAE が出た。
+- bias 制約つき calibration は bias を抑え、高残差上位 10% の改善を強める一方、全体 MAE は `mae_grid_reference` より悪化する。
+
+したがって、論文の主張は次に寄せるのが現実的である。
+
+```text
+提案する残差分解は、強い baseline を置き換える手法ではなく、
+baseline 後の残差に残る day/hour 構造を分解し、
+条件が合う場合に予測補正と外れケース改善を与える。
+```
+
+## あと必要な実験数
+
+最低限は 4 本。
+
+| ID | 目的 | 必須度 |
+| --- | --- | --- |
+| `2-Exp-20` | 2-Exp-19 の seed-level paired bootstrap | 必須 |
+| `2-Exp-21` | 成功例・失敗例の heatmap / residual profile 可視化 | 必須 |
+| `2-Exp-22` | synthetic difficulty の最終表を固定 | 必須 |
+| `2-Exp-23` | 論文用 final table を 1 つの summary に統合 | 必須 |
+
+余裕があれば追加で 2 本。
+
+| ID | 目的 | 必須度 |
+| --- | --- | --- |
+| `2-Exp-24` | FreshRetailNet subset threshold の軽い感度確認 | 任意 |
+| `2-Exp-25` | ablation / leakage probe の appendix 用補強 | 任意 |
+
+つまり、論文 1 本の骨格には「あと 4 本」、査読耐性を上げるなら「あと 6 本」が目安。
+
+## Revised Week 1: 統計検証と採用モデル決定
 
 期間:
 
 ```text
-2026-06-06 〜 2026-06-12
+2026-06-07 〜 2026-06-13
 ```
 
-### 目的
+### 実験
 
-提案法の設計を固定し、実装対象を明確にする。
-
-### 作業
-
-- 出力分解モデルの仕様を確定する。
-- $\hat g,\hat a,\hat c,\hat u$ の出力形状を決める。
-- centering constraint を実装する設計を決める。
-- synthetic data に真の $g,a,c,u$ を保存する。
-- 既存の residual experiment runner に component metrics を追加する設計を決める。
+- `2-Exp-20`: 2-Exp-19 の seed-level paired bootstrap
 
 ### 完了条件
 
-- `OutputDecompositionResidualModel` の設計メモがある。
-- 実装すべき metrics がリスト化されている。
-- synthetic component recovery の評価式が確定している。
+- `series_mean_all` で baseline 改善の CI が確認できる。
+- `bias_constrained_001` を主モデルにするか、`mae_grid_reference` を主モデルにするかを決める。
+- 全体 MAE、bias、高残差 top10 の trade-off を表にできる。
 
-## Week 2: Output Decomposition Model 実装
+## Revised Week 2: 可視化と成功・失敗例
 
 期間:
 
 ```text
-2026-06-13 〜 2026-06-19
+2026-06-14 〜 2026-06-20
 ```
 
-### 目的
+### 実験
 
-提案モデル P1/P2 を動かす。
-
-### 作業
-
-- P1: output decomposition model を実装する。
-- P2: centering constraints を追加する。
-- residual runner から実行できるようにする。
-- smoke config を作る。
-- `g_hat/a_hat/c_hat/u_hat` を保存する。
+- `2-Exp-21`: residual heatmap / hour profile / component profile
 
 ### 完了条件
 
-- smoke synthetic が通る。
-- `summary.json` に component metrics が出る。
-- `g_hat/a_hat/c_hat/u_hat` が保存される。
+- 成功例 3 件、失敗例 3 件を選べる。
+- `series_mean_all` で hour component が residual hour profile と対応する図がある。
+- `same_hour_recent_mean_d7_all` で残差構造が薄いことを示す図がある。
 
-## Week 3: Controlled Synthetic 実験
+## Revised Week 3: Synthetic 最終表
 
 期間:
 
 ```text
-2026-06-20 〜 2026-06-26
+2026-06-21 〜 2026-06-27
 ```
 
-### 目的
+### 実験
 
-合成データで、提案法が成分を回復できるかを見る。
-
-### 作業
-
-- noise level を 3 段階で振る。
-- interaction strength を 3 段階で振る。
-- missing rate を 2 段階で振る。
-- B2/B3/P1/P2 を比較する。
-- 3 seeds で回す。
+- `2-Exp-22`: synthetic difficulty final
 
 ### 完了条件
 
-- component recovery table が作れる。
-- P2 が B3 より $\mathrm{MAE}_g,\mathrm{MAE}_a,\mathrm{MAE}_c,\mathrm{MAE}_u$ のいずれか、できれば全体平均で勝つ。
-- interaction strength が高い条件で $\hat u$ が意味を持つ。
+- noise / interaction / missing の条件別に、どこで成分分解が成立し、どこで失敗するかを表にできる。
+- true component がある synthetic で、同定可能性の主張を支える。
 
-## Week 4: Leakage Suppression 実装
+## Revised Week 4: Final Table 統合
 
 期間:
 
 ```text
-2026-06-27 〜 2026-07-03
+2026-06-28 〜 2026-07-04
 ```
 
-### 目的
+### 実験
 
-P3 を実装する。
-
-### 作業
-
-- leakage probe を adversarial loss 化する。
-- まずは subgroup leakage を対象にする。
-- 次に discount / weekday / hour leakage を必要に応じて追加する。
-- P2 と P3 を synthetic で比較する。
+- `2-Exp-23`: paper table aggregation
 
 ### 完了条件
 
-- P3 が動く。
-- leakage が P2 より下がる。
-- reconstruction が大きく壊れない。
+- Synthetic main table
+- FreshRetailNet correction table
+- Calibration trade-off table
+- Limitation table
 
-## Week 5: FreshRetailNet 基本評価
+を 1 つの出力ディレクトリに固定する。
+
+## Revised Week 5: 任意の補強
 
 期間:
 
 ```text
-2026-07-04 〜 2026-07-10
+2026-07-05 〜 2026-07-11
 ```
 
-### 目的
+### 実験
 
-FreshRetailNet で P2/P3 を評価する。
-
-### 作業
-
-- Full subset
-- active subset
-- high residual subset
-- day/hour/interaction structured subset
-
-を評価する。
-
-比較対象は、
-
-- B0: same-hour baseline
-- B1: ANOVA direct
-- B3: latent concat
-- P2
-- P3
-
-とする。
+- `2-Exp-24`: subset threshold sensitivity
+- `2-Exp-25`: leakage / ablation appendix
 
 ### 完了条件
 
-- `aggregate.csv` が subset x model で出る。
-- corrected MAE と baseline MAE の比較ができる。
-- ablation delta が出る。
-- leakage probe が出る。
+- 査読で聞かれやすい「subset を選んだから良いだけではないか」に答えられる。
+- 表現分離について appendix に補足表を出せる。
 
-## Week 6: FreshRetailNet 追加評価と失敗分析
+## Revised Week 6-7: 執筆
 
 期間:
 
 ```text
-2026-07-11 〜 2026-07-17
-```
-
-### 目的
-
-FreshRetailNet で主張できる範囲を決める。
-
-### 作業
-
-- high residual top10 の改善を見る。
-- zero / nonzero 系列を分ける。
-- stockout 多い系列を除いた評価を行う。
-- subset filter の閾値を軽く振る。
-- 失敗例を residual heatmap で確認する。
-
-### 完了条件
-
-- 「予測補正で主張できるか」または「解釈可能な残差分解に主張を絞るか」を判断する。
-- 失敗例と成功例が 3 つ以上ある。
-
-## Week 7: Robustness
-
-期間:
-
-```text
-2026-07-18 〜 2026-07-24
-```
-
-### 目的
-
-seed 依存を確認する。
-
-### 作業
-
-- 主要条件を 5 seeds で回す。
-- mean/std を出す。
-- paired bootstrap を実装する。
-- synthetic と FreshRetailNet の主要表を固定する。
-
-### 完了条件
-
-- 最終候補モデルが 1 つに絞れている。
-- 主要結果が 5 seeds で出ている。
-- 統計的に弱い箇所が把握できている。
-
-## Week 8: 論文判断
-
-期間:
-
-```text
-2026-07-25 〜 2026-07-31
-```
-
-### 目的
-
-論文の主張を確定する。
-
-### 判断分岐
-
-#### Case A: FreshRetailNet で補正も改善
-
-主張:
-
-```text
-提案する残差直交分解は、解釈可能性と予測補正の両方を改善する。
-```
-
-#### Case B: 補正は弱いが分離性は改善
-
-主張:
-
-```text
-提案する残差直交分解は、強い baseline 下でも、残差構造を解釈可能に分解する。
-```
-
-#### Case C: synthetic では成功、real では弱い
-
-主張:
-
-```text
-暗黙的な latent 分離の限界を実証し、実データで必要な条件を整理する。
-```
-
-Case A または B なら論文として前進する。
-Case C のみなら、投稿論文ではなく修士論文の失敗分析章として扱う。
-
-## Week 9-10: 図表作成
-
-期間:
-
-```text
-2026-08-01 〜 2026-08-14
-```
-
-### 作業
-
-- Table 1: synthetic component recovery
-- Table 2: FreshRetailNet correction
-- Table 3: factor subset ablation
-- Table 4: leakage probe
-- Figure 1: model overview
-- Figure 2: component heatmap
-- Figure 3: failure/success examples
-
-### 完了条件
-
-- 論文本文に貼れる図表が揃う。
-- captions が書ける。
-
-## Week 11: 初稿
-
-期間:
-
-```text
-2026-08-15 〜 2026-08-21
+2026-07-12 〜 2026-07-25
 ```
 
 ### 作業
 
 - Introduction
-- Related Work
 - Method
 - Theory
 - Experiments
 - Discussion
+- Limitations
 
-の初稿を書く。
+を書く。
 
 ### 完了条件
 
 - 8 ページ相当の初稿がある。
-- 主要図表がすべて参照されている。
+- 主要図表が本文から参照されている。
+- FreshRetailNet の主張が過大ではなく、synthetic と real data の役割分担が明確である。
 
-## Week 12: 修正と提出判断
+## Revised Week 8: 投稿判断
 
 期間:
 
 ```text
-2026-08-22 〜 2026-08-28
+2026-07-26 〜 2026-08-01
 ```
 
-### 作業
+### 判断基準
 
-- 主張の強さを調整する。
-- 追加実験が必要か判断する。
-- Appendix に実験詳細をまとめる。
-- 再現手順を整理する。
+#### Case A
 
-### 完了条件
+2-Exp-20 で baseline 改善の CI が明確に 0 未満。
 
-- 投稿可能性の判断ができる。
-- 修士論文の中核章として使える状態になっている。
+主張:
 
-## 最短で確認すべき実験
+```text
+残差分解は解釈可能性と予測補正の両方に寄与する。
+```
 
-時間がない場合は、以下だけを優先する。
+#### Case B
 
-1. controlled synthetic で P2 が B3 より成分回復で勝つ。
-2. FreshRetailNet high residual subset で P2/P3 を評価する。
-3. P2/P3 の leakage が B3 より下がる。
-4. ablation delta が subset の意味と合う。
+MAE の CI は弱いが、hour component / high residual / synthetic が強い。
 
-この 4 つが揃えば、論文の核は立つ。
+主張:
 
+```text
+残差分解は、強い baseline 下の残差構造を解釈し、
+一部条件で予測補正にも寄与する。
+```
+
+#### Case C
+
+FreshRetailNet の統計的改善が弱い。
+
+主張:
+
+```text
+残差分解の成立条件を synthetic と実データで整理し、
+強い baseline 後の residual learning の限界を示す。
+```
+
+現時点では Case B が最も現実的で、2-Exp-20 の結果次第で Case A に寄せられる。
