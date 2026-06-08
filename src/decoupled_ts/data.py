@@ -117,15 +117,18 @@ def frame_to_examples(
     series_days = int(cfg["series_days"])
     forecast_windows = int(cfg.get("forecast_windows", 2))
     history_days = series_days - forecast_windows
+    series_start_offset = int(cfg.get("series_start_offset", 0))
 
     examples: list[SeriesExample] = []
+    skipped_examples = 0
     grouped = df.sort_values(sample_cols + ["dt"]).groupby(sample_cols, sort=False)
     LOGGER.info(
-        "Converting rows to tensors: groups=%d history_days=%d forecast_days=%d target_from_eval=%s",
+        "Converting rows to tensors: groups=%d history_days=%d forecast_days=%d target_from_eval=%s start_offset=%d",
         grouped.ngroups,
         history_days,
         forecast_windows,
         target_df is not None,
+        series_start_offset,
     )
     target_groups = None
     if target_df is not None:
@@ -182,6 +185,9 @@ def frame_to_examples(
         target_sale = np.stack([_as_hours(v) for v in target_group[sales_col]], axis=0).astype(np.float32)
         target = target_sale.sum(dtype=np.float32)
         subgroup = int(history_group.iloc[0][cfg.get("subgroup_target", "city_id")])
+        if skipped_examples < series_start_offset:
+            skipped_examples += 1
+            continue
         examples.append(
             SeriesExample(
                 x=x,
@@ -262,4 +268,6 @@ def _cache_path(cfg: dict[str, Any], split: str, max_series: int | None) -> Path
     days = f"d{cfg['series_days']}_w{cfg['window_size']}_f{cfg.get('forecast_windows', 2)}"
     subgroup = cfg.get("subgroup_target", "city_id")
     sample = "-".join(str(col) for col in cfg.get("sample_id_columns", ["sample"]))
-    return cache_dir / f"{split}_{target_mode}_{days}_{subgroup}_{sample}_{limit}.pt"
+    offset = int(cfg.get("series_start_offset", 0))
+    offset_tag = "" if offset == 0 else f"_o{offset}"
+    return cache_dir / f"{split}_{target_mode}_{days}_{subgroup}_{sample}_{limit}{offset_tag}.pt"
