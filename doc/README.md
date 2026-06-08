@@ -30,4 +30,4 @@
 | 2-Exp-22 | [2-Exp-22_synthetic_difficulty_final.md](2-Exp-22_synthetic_difficulty_final.md) | Synthetic での成分回復と失敗条件の最終表 |
 | 2-Exp-23 | [2-Exp-23_paper_tables.md](2-Exp-23_paper_tables.md) | 論文用 final table の自動集約 |
 | 2-Exp-24 | [2-Exp-24_freshretailnet_scale_sensitivity.md](2-Exp-24_freshretailnet_scale_sensitivity.md) | FreshRetailNet の系列数感度確認 |
-
+| 2-Exp-25 | [2-Exp-25_freshretailnet_block_robustness.md](2-Exp-25_freshretailnet_block_robustness.md) | FreshRetailNet の系列ブロック頑健性確認 |

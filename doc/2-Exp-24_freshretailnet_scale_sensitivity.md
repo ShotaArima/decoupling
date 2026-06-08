@@ -98,3 +98,44 @@ runs/2-Exp-24_freshretailnet_scale_sensitivity/summary.json
 series_mean residual の改善は、系列数や対象系列に敏感であり、
 提案法の適用条件としてさらに整理が必要である。
 ```
+
+## 結果
+
+実行コマンド:
+
+```bash
+uv run decoupled-ts residual-sweep --config configs/2-Exp-24_freshretailnet_scale_sensitivity.json
+```
+
+結果は 3 seed 平均で読む。
+
+| scenario | model | baseline MAE | corrected MAE | calibrated MAE | top10 baseline | top10 corrected | top10 calibrated | bias | calibrated bias | hour corr | hour ablation delta |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `series_mean_2k` | `mae_grid_reference` | 0.0721 | 0.0598 | 0.0580 | 0.2923 | 0.2688 | 0.2677 | -0.3139 | -0.3575 | 0.9429 | 0.0050 |
+| `series_mean_2k` | `bias_constrained_001` | 0.0721 | 0.0598 | 0.0622 | 0.2923 | 0.2643 | 0.2477 | -0.2862 | -0.0002 | 0.9831 | 0.0045 |
+| `series_mean_6k` | `mae_grid_reference` | 0.0697 | 0.0510 | 0.0511 | 0.2788 | 0.2132 | 0.2135 | -0.2511 | -0.2825 | 0.9898 | 0.0099 |
+| `series_mean_6k` | `bias_constrained_001` | 0.0697 | 0.0514 | 0.0543 | 0.2788 | 0.2126 | 0.1987 | -0.2219 | -0.0123 | 0.9940 | 0.0103 |
+| `series_mean_12k` | `mae_grid_reference` | 0.0694 | 0.0494 | 0.0493 | 0.2770 | 0.1994 | 0.2025 | -0.2634 | -0.2717 | 0.9822 | 0.0109 |
+| `series_mean_12k` | `bias_constrained_001` | 0.0694 | 0.0487 | 0.0519 | 0.2770 | 0.1964 | 0.1826 | -0.2488 | -0.0139 | 0.9920 | 0.0115 |
+| `same_hour_recent_mean_d7_6k` | `mae_grid_reference` | 0.0580 | 0.0564 | 0.0561 | 0.2534 | 0.2384 | 0.2399 | -0.1260 | -0.1628 | -0.8767 | 0.0002 |
+| `same_hour_recent_mean_d7_6k` | `bias_constrained_001` | 0.0580 | 0.0565 | 0.0582 | 0.2534 | 0.2401 | 0.2454 | -0.1361 | -0.0000 | -0.8643 | 0.0004 |
+| `same_hour_recent_mean_d7_12k` | `mae_grid_reference` | 0.0574 | 0.0546 | 0.0546 | 0.2530 | 0.2322 | 0.2320 | -0.2128 | -0.1917 | -0.8861 | 0.0010 |
+| `same_hour_recent_mean_d7_12k` | `bias_constrained_001` | 0.0574 | 0.0547 | 0.0571 | 0.2530 | 0.2307 | 0.2343 | -0.1688 | -0.0002 | -0.8738 | 0.0006 |
+
+## 読み取り
+
+`series_mean` residual では、系列数を 2000 から 12000 に増やしても改善が保たれた。
+
+特に `series_mean_12k` では、baseline MAE 0.0694 に対して corrected MAE は 0.0487〜0.0494 であり、約 29% の改善である。高残差上位 10% でも 0.2770 から 0.1964〜0.1994 まで改善した。bias 制約つき calibration では calibrated top10 が 0.1826 まで下がり、外れケース補正としてはさらに強い。
+
+hour component も安定している。`series_mean_12k` の hour corr は 0.9822〜0.9920 であり、hour component を消したときの MAE 悪化も 0.0109〜0.0115 で、2k / 6k より大きい。系列数を増やすほど、時間帯成分の寄与がむしろ明確になっている。
+
+一方、`same_hour_recent_mean_d7` residual は MAE では少し改善するが、hour corr が一貫して負になっている。これは「予測補正としては多少効くが、hour component が残差の時間帯 profile を素直に説明している」とは言いづらい。強い基準値が時間帯構造を先に吸収し、残った残差では成分の解釈が不安定になる、という限界例として扱うのが妥当である。
+
+## 結論
+
+2-Exp-24 により、FreshRetailNet の主成功例を `series_mean` residual に置く判断は強くなった。
+
+ただし、これはまだ「先頭から取った系列数を増やした」確認であり、FreshRetailNet 全体に対する交差検証ではない。次に必要なのは、系列の取り方を変えても同じ傾向が保たれるかを見ることである。
+
+そのため、次は `2-Exp-25: FreshRetailNet block robustness` を行う。
