@@ -16,6 +16,8 @@
 - 2-Exp-21 で、`series_mean_all` は hour component が強く、`same_hour_recent_mean_d7_all` は hour component が薄いことを確認した。
 - 2-Exp-22 で、synthetic では `output_decomp_centered` が true component を高い相関で回復し、centering と interaction component の必要性も確認できた。
 - 2-Exp-23 で、synthetic / FreshRetailNet / statistical validation の論文用表を CSV/Markdown として再生成可能にした。
+- 2-Exp-24 で、FreshRetailNet の `series_mean` residual は 12000 train 系列まで増やしても改善が保たれ、hour component の対応も安定した。
+- 2-Exp-24 では、`same_hour_recent_mean_d7` residual も MAE は少し改善したが、hour component の対応は負相関になり、解釈可能な分解としては不安定だった。
 - bias 制約つき calibration は bias を抑え、高残差上位 10% の改善を強める一方、全体 MAE は `mae_grid_reference` より悪化する。
 
 したがって、論文の主張は次に寄せるのが現実的である。
@@ -38,12 +40,13 @@ baseline 後の残差に残る day/hour 構造を分解し、
 
 | ID | 目的 | 必須度 |
 | --- | --- | --- |
-| `2-Exp-24` | FreshRetailNet の系列数感度確認 | 推奨 |
-| `2-Exp-25` | 基準値選択と target 設計の自動化に向けた診断 | 任意 |
-| `2-Exp-26` | 実データの interaction 成分が出る条件の探索 | 任意 |
-| `2-Exp-27` | 異常検知・運用支援への応用例整理 | 任意 |
+| `2-Exp-24` | FreshRetailNet の系列数感度確認 | 完了 |
+| `2-Exp-25` | FreshRetailNet の系列ブロック頑健性確認 | 推奨 |
+| `2-Exp-26` | 基準値選択と target 設計の自動化に向けた診断 | 任意 |
+| `2-Exp-27` | 実データの interaction 成分が出る条件の探索 | 任意 |
+| `2-Exp-28` | 異常検知・運用支援への応用例整理 | 任意 |
 
-つまり、論文 1 本の骨格に必要な実験は揃っている。次の実験は主張の中心を作るためではなく、限界として残っている「全件評価ではない」「基準値選択に依存する」「実データ interaction が弱い」という点を補強するために行う。
+つまり、論文 1 本の骨格に必要な実験は揃っている。次の実験は主張の中心を作るためではなく、限界として残っている「全件交差検証ではない」「系列選択に依存する可能性がある」「基準値選択に依存する」「実データ interaction が弱い」という点を補強するために行う。
 
 ## Revised Week 1: 統計検証と採用モデル決定
 
@@ -203,7 +206,16 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-24_freshretailnet_scal
 uv run decoupled-ts residual-sweep --config configs/2-Exp-24_freshretailnet_scale_sensitivity.json
 ```
 
-## Revised Week 6.5: 追加検証 2 - 基準値選択と interaction 探索
+状態:
+
+```text
+完了。series_mean residual は 2k / 6k / 12k すべてで baseline を改善した。
+series_mean_12k では baseline MAE 0.0694 に対し、corrected MAE は 0.0487〜0.0494。
+hour component residual profile corr も 0.9822〜0.9920 と高く、系列数を増やしても hour 成分の対応は崩れなかった。
+same_hour_recent_mean_d7 は MAE では小さく改善したが、hour corr が負になり、解釈可能な分解としては弱い。
+```
+
+## Revised Week 6.5: 追加検証 2 - 系列ブロック頑健性
 
 期間:
 
@@ -211,32 +223,64 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-24_freshretailnet_scal
 2026-06-20 〜 2026-06-27
 ```
 
-### 実験候補
+### 実験
 
-- `2-Exp-25`: residual target / baseline selection diagnostics
-- `2-Exp-26`: real-data interaction condition search
+- `2-Exp-25`: FreshRetailNet block robustness
 
 ### 目的
 
-2-Exp-25 では、どの系列で `series_mean` がよく、どの系列で `same_hour_recent_mean` がよいかを診断する。
+2-Exp-24 は、先頭から取る系列数を増やす実験だった。
 
-2-Exp-26 では、休日、値引き、欠品、天気などの条件と時間帯が組み合わさる場面を集め、実データで interaction 成分が見えるかを確認する。
+2-Exp-25 では、系列の開始位置をずらし、先頭ブロック以外でも `series_mean` residual の改善と hour component の対応が保たれるかを確認する。
 
-### 実施判断
+### 完了条件
 
-2-Exp-24 の結果が次のどちらかに該当する場合に実施する。
+- `series_mean_block1_6k` と `series_mean_block2_6k` でも corrected MAE が baseline MAE より低い。
+- high residual top10 でも改善する。
+- hour component residual profile corr が正で高い。
+- `same_hour_recent_mean_d7` では、MAE 改善と解釈可能性が分離するという限界解釈が保たれる。
 
-- 系列数を増やすと `series_mean` の改善が弱くなる。
-- 本文執筆時に、`series_mean_all` の選択が恣意的に見える。
+### 実行コマンド
 
-該当しなければ、2-Exp-25/26 は appendix または今後課題に回し、執筆を優先する。
+```bash
+uv run decoupled-ts residual-sweep --config configs/2-Exp-25_freshretailnet_block_robustness_smoke.json
+uv run decoupled-ts residual-sweep --config configs/2-Exp-25_freshretailnet_block_robustness.json
+```
 
-## Revised Week 6.75: 応用例整理
+## Revised Week 6.75: 追加検証 3 - 基準値選択と interaction 探索
 
 期間:
 
 ```text
-2026-06-24 〜 2026-06-30
+2026-06-24 〜 2026-07-01
+```
+
+### 実験候補
+
+- `2-Exp-26`: residual target / baseline selection diagnostics
+- `2-Exp-27`: real-data interaction condition search
+
+### 目的
+
+2-Exp-26 では、どの系列で `series_mean` がよく、どの系列で `same_hour_recent_mean` がよいかを診断する。
+
+2-Exp-27 では、休日、値引き、欠品、天気などの条件と時間帯が組み合わさる場面を集め、実データで interaction 成分が見えるかを確認する。
+
+### 実施判断
+
+2-Exp-25 の結果が次のどちらかに該当する場合に実施する。
+
+- 系列ブロックを変えると `series_mean` の改善が弱くなる。
+- 本文執筆時に、`series_mean_all` の選択が恣意的に見える。
+
+該当しなければ、2-Exp-26/27 は appendix または今後課題に回し、執筆を優先する。
+
+## Revised Week 6.9: 応用例整理
+
+期間:
+
+```text
+2026-06-28 〜 2026-07-03
 ```
 
 ### 作業
