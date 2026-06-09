@@ -69,6 +69,7 @@ def run_residual_sweep(config_path: str) -> dict[str, Any]:
     has_scenarios = "scenarios" in sweep_cfg
     scenarios = sweep_cfg.get("scenarios", [{"name": "base", "overrides": {}}])
     root_out = Path(sweep_cfg.get("output_dir", str(base_config["train"]["output_dir"]) + "_sweep"))
+    subsets = sweep_cfg.get("subsets") or [{"name": "default", "subset_filter": base_config.get("dataset", {}).get("subset_filter", {})}]
     root_out.mkdir(parents=True, exist_ok=True)
     logger = setup_run_logger(root_out, name="residual_sweep")
     logger.info("Residual sweep start config=%s seeds=%s scenarios=%d", config_path, seeds, len(scenarios))

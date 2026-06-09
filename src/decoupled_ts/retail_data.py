@@ -486,6 +486,8 @@ def _filter_dataset(dataset: Dataset, cfg: dict[str, Any]) -> Dataset:
         mask = batch["mask"].numpy()
         sales = x[:, 0, :].reshape(x.shape[0], -1, hours)
         observed = mask[:, 0, :].reshape(mask.shape[0], -1, hours)
+        grid = x.transpose(0, 2, 1).reshape(x.shape[0], -1, hours, x.shape[1])
+        labels = _labels_from_retail_grid(grid, cfg)
         observed_count = np.clip(observed.sum(axis=(1, 2)), 1.0, None)
         observed_sales = sales * observed
         mean_sales = observed_sales.sum(axis=(1, 2)) / observed_count

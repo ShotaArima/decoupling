@@ -19,6 +19,7 @@
 | 2-Exp-7 | [2-Exp-7_swap_regularization_design.md](2-Exp-7_swap_regularization_design.md) | 反実仮想 swap 正則化あり/なしの分離性比較 |
 | 2-Exp-8 | [2-Exp-8_structured_residual_synthetic_design.md](2-Exp-8_structured_residual_synthetic_design.md) | 真の residual 構造を持つ synthetic で仮説成立条件を検証 |
 | 2-Exp-9 | [2-Exp-9_multiseed_and_subset_design.md](2-Exp-9_multiseed_and_subset_design.md) | `interaction_no_swap` / `interaction_with_swap` の複数 seed と FreshRetailNet subset 評価 |
+| 2-Exp-10 | [2-Exp-10_factor_structured_subset_design.md](2-Exp-10_factor_structured_subset_design.md) | 因子別 subset、positive/leakage probe、targeted ablation による表現分離評価 |
 | 2-Exp-11 | [2-Exp-11_output_decomposition_design.md](2-Exp-11_output_decomposition_design.md) | 出力成分を `global/day/hour/interaction` に分ける残差直交分解モデル |
 | 2-Exp-12〜15 | [2-Exp-12_to_15_followup_design.md](2-Exp-12_to_15_followup_design.md) | FreshRetailNet subset 条件、bias 制御、synthetic 難易度、論文用最終比較 |
 | 2-Exp-16 | [2-Exp-16_residual_target_sensitivity.md](2-Exp-16_residual_target_sensitivity.md) | FreshRetailNet の residual target 感度、再現性 subset、集約粒度の比較 |
