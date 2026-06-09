@@ -2,7 +2,7 @@
 
 ## 現在地
 
-更新日: 2026-06-08
+更新日: 2026-06-09
 
 当初の 12 週間計画のうち、実装と探索の多くは前倒しで進んでいる。
 
@@ -18,6 +18,8 @@
 - 2-Exp-23 で、synthetic / FreshRetailNet / statistical validation の論文用表を CSV/Markdown として再生成可能にした。
 - 2-Exp-24 で、FreshRetailNet の `series_mean` residual は 12000 train 系列まで増やしても改善が保たれ、hour component の対応も安定した。
 - 2-Exp-24 では、`same_hour_recent_mean_d7` residual も MAE は少し改善したが、hour component の対応は負相関になり、解釈可能な分解としては不安定だった。
+- 2-Exp-25 で、`series_mean` residual の改善は先頭系列ブロックだけでなく、開始位置をずらした 3 つの 6000 系列ブロックでも再現した。
+- 2-Exp-25 でも、`same_hour_recent_mean_d7` residual は改善幅が小さく、hour component の対応は負相関であり、強い基準値下では解釈可能な残差構造が残りにくいことを確認した。
 - bias 制約つき calibration は bias を抑え、高残差上位 10% の改善を強める一方、全体 MAE は `mae_grid_reference` より悪化する。
 
 したがって、論文の主張は次に寄せるのが現実的である。
@@ -41,12 +43,12 @@ baseline 後の残差に残る day/hour 構造を分解し、
 | ID | 目的 | 必須度 |
 | --- | --- | --- |
 | `2-Exp-24` | FreshRetailNet の系列数感度確認 | 完了 |
-| `2-Exp-25` | FreshRetailNet の系列ブロック頑健性確認 | 推奨 |
+| `2-Exp-25` | FreshRetailNet の系列ブロック頑健性確認 | 完了 |
 | `2-Exp-26` | 基準値選択と target 設計の自動化に向けた診断 | 任意 |
 | `2-Exp-27` | 実データの interaction 成分が出る条件の探索 | 任意 |
 | `2-Exp-28` | 異常検知・運用支援への応用例整理 | 任意 |
 
-つまり、論文 1 本の骨格に必要な実験は揃っている。次の実験は主張の中心を作るためではなく、限界として残っている「全件交差検証ではない」「系列選択に依存する可能性がある」「基準値選択に依存する」「実データ interaction が弱い」という点を補強するために行う。
+つまり、論文 1 本の骨格に必要な実験は揃っている。2-Exp-24 と 2-Exp-25 により、「系列数を増やしても保たれるか」「系列ブロックを変えても保たれるか」は補強できた。次の実験は主張の中心を作るためではなく、限界として残っている「基準値選択に依存する」「実データ interaction が弱い」という点を補強するために行う。
 
 ## Revised Week 1: 統計検証と採用モデル決定
 
@@ -247,6 +249,15 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-25_freshretailnet_bloc
 uv run decoupled-ts residual-sweep --config configs/2-Exp-25_freshretailnet_block_robustness.json
 ```
 
+状態:
+
+```text
+完了。series_mean residual は block0 / block1 / block2 のすべてで baseline を改善した。
+MAE 改善幅は 0.0173〜0.0190 程度で、先頭系列だけに依存する結果ではなかった。
+hour component residual profile corr も mae_grid_reference で 0.9754〜0.9957 と高く、時間帯成分の対応は保たれた。
+same_hour_recent_mean_d7 は各 block で MAE がわずかに改善するが、hour corr は -0.8870〜-0.8085 と負であり、解釈可能な分解としては弱い。
+```
+
 ## Revised Week 6.75: 追加検証 3 - 基準値選択と interaction 探索
 
 期間:
@@ -268,10 +279,12 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-25_freshretailnet_bloc
 
 ### 実施判断
 
-2-Exp-25 の結果が次のどちらかに該当する場合に実施する。
+2-Exp-25 は良好だったため、2-Exp-26/27 は必須ではない。
 
-- 系列ブロックを変えると `series_mean` の改善が弱くなる。
+それでも次のどちらかを本文で強めたい場合に実施する。
+
 - 本文執筆時に、`series_mean_all` の選択が恣意的に見える。
+- 実データで interaction 成分が弱い理由を、より具体的な条件分析として示したい。
 
 該当しなければ、2-Exp-26/27 は appendix または今後課題に回し、執筆を優先する。
 
