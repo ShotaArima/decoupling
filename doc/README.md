@@ -19,3 +19,15 @@
 | 2-Exp-7 | [2-Exp-7_swap_regularization_design.md](2-Exp-7_swap_regularization_design.md) | 反実仮想 swap 正則化あり/なしの分離性比較 |
 | 2-Exp-8 | [2-Exp-8_structured_residual_synthetic_design.md](2-Exp-8_structured_residual_synthetic_design.md) | 真の residual 構造を持つ synthetic で仮説成立条件を検証 |
 | 2-Exp-9 | [2-Exp-9_multiseed_and_subset_design.md](2-Exp-9_multiseed_and_subset_design.md) | `interaction_no_swap` / `interaction_with_swap` の複数 seed と FreshRetailNet subset 評価 |
+| 2-Exp-11 | [2-Exp-11_output_decomposition_design.md](2-Exp-11_output_decomposition_design.md) | 出力成分を `global/day/hour/interaction` に分ける残差直交分解モデル |
+| 2-Exp-12〜15 | [2-Exp-12_to_15_followup_design.md](2-Exp-12_to_15_followup_design.md) | FreshRetailNet subset 条件、bias 制御、synthetic 難易度、論文用最終比較 |
+| 2-Exp-16 | [2-Exp-16_residual_target_sensitivity.md](2-Exp-16_residual_target_sensitivity.md) | FreshRetailNet の residual target 感度、再現性 subset、集約粒度の比較 |
+| 2-Exp-17 | [2-Exp-17_freshretailnet_hour_component_validation.md](2-Exp-17_freshretailnet_hour_component_validation.md) | FreshRetailNet での `series_mean` 残差と hour 成分寄与の 5 seed 検証 |
+| 2-Exp-18 | [2-Exp-18_calibration_shrinkage.md](2-Exp-18_calibration_shrinkage.md) | FreshRetailNet 残差補正の validation calibration と shrinkage |
+| 2-Exp-19 | [2-Exp-19_bias_constrained_calibration.md](2-Exp-19_bias_constrained_calibration.md) | FreshRetailNet 残差補正における bias 制約つき calibration |
+| 2-Exp-20 | [2-Exp-20_statistical_validation.md](2-Exp-20_statistical_validation.md) | FreshRetailNet 残差補正の seed-level paired bootstrap |
+| 2-Exp-21 | [2-Exp-21_visualization.md](2-Exp-21_visualization.md) | FreshRetailNet 残差補正の hour profile と成功・失敗例の可視化 |
+| 2-Exp-22 | [2-Exp-22_synthetic_difficulty_final.md](2-Exp-22_synthetic_difficulty_final.md) | Synthetic での成分回復と失敗条件の最終表 |
+| 2-Exp-23 | [2-Exp-23_paper_tables.md](2-Exp-23_paper_tables.md) | 論文用 final table の自動集約 |
+| 2-Exp-24 | [2-Exp-24_freshretailnet_scale_sensitivity.md](2-Exp-24_freshretailnet_scale_sensitivity.md) | FreshRetailNet の系列数感度確認 |
+| 2-Exp-25 | [2-Exp-25_freshretailnet_block_robustness.md](2-Exp-25_freshretailnet_block_robustness.md) | FreshRetailNet の系列ブロック頑健性確認 |
