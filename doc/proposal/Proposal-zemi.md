@@ -452,6 +452,7 @@ m_{i,d,h}
 | 表の整理 | 2-Exp-23 | 論文用表を集約 | 本文表と appendix 表を分けられる |
 | 規模確認 | 2-Exp-24 | 系列数を増やす | 12k でも `series_mean` は改善 |
 | block 確認 | 2-Exp-25 | 系列開始位置を変える | 先頭系列だけに依存しない |
+| 元論からの接続 | 2-Exp-26 | 通常予測で `global/local` と day/hour split を比較 | day/hour は小幅改善、interaction は不安定 |
 
 ## 4.2 合成データ(Synthetic) で言えること
 
@@ -492,8 +493,37 @@ FreshRetailNet では真の成分は分からない。
 | 2-Exp-24 | `same_hour_recent_mean_d7_12k` | baseline MAE 0.0574、corrected MAE 0.0546〜0.0547、hour corr は負 | 強い基準値では残差の hour 構造が読みにくい |
 | 2-Exp-25 | `series_mean_block0/1/2_6k` | MAE 改善幅 0.0173〜0.0190 | 先頭系列だけに依存しない |
 | 2-Exp-25 | `same_hour_recent_mean_d7_block0/1/2_6k` | 改善幅は 0.0008〜0.0017 程度、hour corr は全て負 | 補正は小さく、成分解釈は弱い |
+| 2-Exp-26 | direct forecasting | `global/day/hour` は `global/local` より WAPE を 0.6233 から 0.6133 に小幅改善、interaction 付きは WAPE 0.6267 | 通常予測では day/hour 分割は導入できるが、interaction までの強い根拠は弱い |
 
-## 4.4 現時点で言えること
+## 4.4 なぜ残差を主対象にするか
+
+2-Exp-26 では、元論文に近い `global + local` 分解を通常の future total forecasting に移植し、同じ反実仮想 global 正則化の下で、local を `day/hour/interaction` に分ける比較を行った。
+
+結果として、`global + day + hour` は `global + local` より少し良かった。
+
+| model | MAE | WAPE | bias |
+|---|---:|---:|---:|
+| `paper_global_local` | 1.4850 | 0.6233 | -0.4676 |
+| `four_factor_global_day_hour` | 1.4611 | 0.6133 | -0.3787 |
+| `four_factor_global_day_hour_interaction` | 1.4931 | 0.6267 | -0.2662 |
+
+この結果から、local を day/hour に分けることは、小売需要に合った自然な拡張として導入できる。
+
+しかし、通常予測では interaction まで入れても MAE/WAPE は改善しなかった。これは、売上全体 $y$ には系列水準、商品差、店舗差、曜日性、時間帯性、欠品などが同時に含まれ、day/hour/interaction の役割が混ざりやすいためである。
+
+したがって、本研究では次のように問題を絞る。
+
+```text
+売上全体を直接 4 成分に分けるのではなく、
+まず基準値 b で説明しやすい主効果を取り除き、
+残った r = y - b に対して成分分解を行う。
+```
+
+この整理により、2-Exp-26 は「通常予測で 4 成分が常に勝つ」ことを示す実験ではなく、「元論文の global/local から day/hour 分割へ進む導入」として使う。
+
+次に必要なのは、同じ `global/local` reference と day/hour split を residual target に適用したとき、direct target より差が明確になるかを見ることである。そのため、2-Exp-27 では `series_mean` residual に絞って、同じ 3 つの表現構造を比較する。
+
+## 4.5 現時点で言えること
 
 現時点で言えることは次である。
 
@@ -503,7 +533,9 @@ FreshRetailNet では真の成分は分からない。
 4. `series_mean` residual の改善は、系列数を増やしても、系列ブロックを変えても保たれた。
 5. synthetic では、真の成分がある条件で output decomposition が成分を回復できる。
 
-## 4.5 現時点で言えないこと
+6. 通常予測では day/hour 分割の効果は小幅であり、interaction 成分の必要性は residual 側で検証する必要がある。
+
+## 4.6 現時点で言えないこと
 
 一方で、次のことはまだ言えない。
 
@@ -522,7 +554,7 @@ FreshRetailNet では真の成分は分からない。
 その残差を成分に分けて補正し、どの軸のズレなのかを説明する手法である。
 ```
 
-## 4.6 応用上の意味
+## 4.7 応用上の意味
 
 この分解ができると、単に予測値を出すだけでなく、次のような使い方ができる。
 

@@ -251,6 +251,104 @@ uv run decoupled-ts retail-experiment --config configs/2-Exp-26_global_local_to_
 
 smoke は 1 epoch / 小規模データなので性能差の解釈には使わない。構文と学習ループの確認用である。
 
+## FreshRetailNet 結果
+
+実行コマンド:
+
+```bash
+uv run decoupled-ts retail-experiment --config configs/2-Exp-26_global_local_to_four_factor_freshretailnet.json
+```
+
+結果:
+
+| model | best epoch | valid loss | MAE | RMSE | WAPE | bias | z_global subgroup acc | z_day weekday acc | z_day holiday acc | z_day discount MAE |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `paper_global_local` | 6 | 8.1246 | 1.4850 | 4.3703 | 0.6233 | -0.4676 | 0.0000 | - | - | - |
+| `four_factor_global_day_hour` | 11 | 7.8172 | 1.4611 | 4.3013 | 0.6133 | -0.3787 | 0.0000 | 0.1575 | 0.5458 | 0.1014 |
+| `four_factor_global_day_hour_interaction` | 4 | 7.8440 | 1.4931 | 4.2815 | 0.6267 | -0.2662 | 0.0000 | 0.2124 | 0.5266 | 0.1038 |
+
+`paper_global_local` に対する差分:
+
+| model | MAE delta | RMSE delta | WAPE delta | bias delta |
+|---|---:|---:|---:|---:|
+| `four_factor_global_day_hour` | -0.0239 | -0.0691 | -0.0101 | +0.0889 |
+| `four_factor_global_day_hour_interaction` | +0.0080 | -0.0889 | +0.0034 | +0.2014 |
+
+`four_factor_global_day_hour` は `paper_global_local` より MAE / RMSE / WAPE / valid loss のすべてで少し良い。WAPE の改善は 0.6233 から 0.6133 で、絶対値では 0.0101、相対では約 1.6% の改善である。bias も -0.4676 から -0.3787 に改善している。
+
+一方、`four_factor_global_day_hour_interaction` は RMSE と bias は改善するが、MAE と WAPE は `paper_global_local` より悪い。したがって、この通常予測設定では interaction まで足すことが安定した改善にはつながっていない。
+
+## FreshRetailNet の読み取り
+
+主に言えることは次の 3 点である。
+
+1. `global/local` から `global/day/hour` への分割は、通常の future total forecasting でも小さな改善を示した。
+2. `day/hour/interaction` まで入れると、RMSE と bias は改善するが、MAE/WAPE は悪化した。
+3. probe は弱く、特に `z_global` は subgroup を識別できていない。
+
+### day/hour 分割について
+
+`four_factor_global_day_hour` は、元論準拠の `paper_global_local` より少し良い。これは、local を完全に自由な cell-level latent として持つより、retail data の構造に合わせて day と hour に分けた方が、通常予測でも帰納バイアスとして効く可能性を示す。
+
+ただし改善幅は大きくない。したがって、論文では次の程度の控えめな主張が妥当である。
+
+```text
+通常予測タスクでも、local 表現を day/hour に分けることで global/local reference をわずかに改善した。
+これは、retail demand の局所変動を日単位要因と時間帯要因に分ける設計が、元論の local latent を単に細分化したものとして自然に導入できることを示す。
+```
+
+### interaction について
+
+interaction 付きモデルは valid loss では `paper_global_local` より良いが、test MAE/WAPE では悪い。これは、通常の future total sales という集約ターゲットでは、day x hour interaction の細かい cell-level 情報が過剰になっている可能性がある。
+
+一方で RMSE と bias は改善している。大きな誤差や系統的な過小予測には interaction が効いている可能性があるが、平均絶対誤差ではその複雑さが不利に出ている。
+
+この結果は、interaction 成分を「通常予測で常に有利な追加要素」として主張するには弱い。むしろ、次のように residual 実験への橋渡しとして使うのが自然である。
+
+```text
+day/hour split は通常予測でも小さく有効だったが、interaction は集約予測では安定した改善を示さなかった。
+そのため、interaction の価値は、強い baseline で主効果を除いた後に残る cell-level residual 構造で検証する必要がある。
+```
+
+### probe について
+
+`probe_z_global_subgroup_accuracy` はすべて 0.0 である。train には 9 subgroup、test には 3 subgroup しかなく、overlap も 3 であるため、subgroup probe 自体がかなり厳しい設定になっている。majority accuracy は 0.582 であり、probe が subgroup をうまく拾えていないことは明確である。
+
+これは 2 つの可能性を示す。
+
+- `z_global` が city/subgroup よりも store-product 固有の需要水準や販売量情報を優先している。
+- FreshRetailNet の train/test subgroup 分布が probe に向いておらず、global 表現の評価として city classification が不安定である。
+
+したがって、Exp-26 の FreshRetailNet 結果では、`z_global` の解釈性を subgroup probe で強く主張しない方がよい。
+
+`z_day` probe も強くはない。weekday accuracy は 0.1575 / 0.2124 で、7 クラスのランダム水準 0.1429 よりは上だが高くない。holiday accuracy も 0.526 前後で、class imbalance を考えると強い証拠とは言いにくい。discount MAE は 0.10 程度で、販促強度をある程度反映している可能性はあるが、単独で強い主張にはしない。
+
+## FreshRetailNet 結果からの結論
+
+この結果は、Exp-26 の目的に対して部分的に成功している。
+
+成功している点:
+
+- 元論準拠の `global + local` reference を実装し、同じ反実仮想正則化込みで比較できた。
+- `global + day + hour` は `global + local` より少し良く、local を retail 構造に沿って分ける導入として使える。
+- 残差ターゲットに進む前に、通常予測で day/hour 分割の小さな有効性を示せた。
+
+弱い点:
+
+- interaction まで入れた 4 成分版は、通常予測の MAE/WAPE では改善していない。
+- probe は全体に弱く、表現解釈性の主張はこの実験だけでは不十分である。
+- `z_global` subgroup accuracy が 0.0 なので、global 表現が city/subgroup を表すとは言えない。
+
+したがって、論文上の整理は次が妥当である。
+
+```text
+Exp-26 は、元論の global/local 分解から本研究の day/hour 分割へ進むための橋渡しである。
+FreshRetailNet の通常予測では、day/hour 分割は global/local reference を小幅に改善した。
+一方、interaction 成分と表現解釈性は通常予測だけでは明確に支持されない。
+このため、以降の residual 実験では、強い baseline で説明済みの主効果を除いた後に、
+hour/interaction 成分が残差補正と component analysis で意味を持つかを検証する。
+```
+
 ## 論文上の使い方
 
 この実験は、提案の導入を滑らかにするために使う。
