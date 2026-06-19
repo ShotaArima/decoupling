@@ -154,9 +154,128 @@ smoke 結果:
 
 これは smoke 用の小規模 synthetic なので、性能差の解釈には使わない。確認したい点は、3 つの residual variant が同じ config で学習・評価でき、`corrected_cell_mae`、high residual 指標、hour profile 指標が出ることである。
 
-本番の FreshRetailNet 実行後は、次の観点でこの節に結果を追記する。
+## FreshRetailNet 結果
 
-- `paper_global_local_residual` に対する `four_factor_*` の corrected MAE / WAPE 改善幅。
-- Exp-26 direct target の改善幅と、Exp-27 residual target の改善幅の比較。
-- high residual top10 で day/hour/interaction が効いているか。
-- 結果が弱い場合は、残差 target 一般ではなく `series_mean` など residual structure が残る baseline に依存する、と整理する。
+実行コマンド:
+
+```bash
+uv run decoupled-ts residual-experiment --config configs/2-Exp-27_direct_vs_residual_bridge_freshretailnet.json
+```
+
+結果:
+
+| model | best epoch | residual MAE | residual R2 | baseline cell MAE | corrected cell MAE | corrected WAPE | corrected bias | top10 corrected MAE | hour corr |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `paper_global_local_residual` | 10 | 0.0593 | 0.1152 | 0.0721 | 0.0593 | 0.9577 | -0.3966 | 0.2794 | 0.8937 |
+| `four_factor_global_day_hour_residual` | 11 | 0.0671 | 0.0255 | 0.0721 | 0.0671 | 1.0838 | -0.1203 | 0.2907 | 0.8908 |
+| `four_factor_global_day_hour_interaction_residual` | 10 | 0.0614 | 0.0007 | 0.0721 | 0.0614 | 0.9917 | -0.3898 | 0.2989 | 0.8797 |
+
+`paper_global_local_residual` に対する差分:
+
+| model | corrected cell MAE delta | corrected WAPE delta | top10 corrected MAE delta | residual R2 delta |
+|---|---:|---:|---:|---:|
+| `four_factor_global_day_hour_residual` | +0.0078 | +0.1261 | +0.0113 | -0.0897 |
+| `four_factor_global_day_hour_interaction_residual` | +0.0021 | +0.0340 | +0.0196 | -0.1145 |
+
+baseline に対する改善:
+
+| model | baseline cell MAE | corrected cell MAE | MAE improvement | top10 baseline MAE | top10 corrected MAE | top10 improvement |
+|---|---:|---:|---:|---:|---:|---:|
+| `paper_global_local_residual` | 0.0721 | 0.0593 | 0.0129 | 0.2923 | 0.2794 | 0.0129 |
+| `four_factor_global_day_hour_residual` | 0.0721 | 0.0671 | 0.0051 | 0.2923 | 0.2907 | 0.0016 |
+| `four_factor_global_day_hour_interaction_residual` | 0.0721 | 0.0614 | 0.0108 | 0.2923 | 0.2989 | -0.0066 |
+
+## FreshRetailNet の読み取り
+
+2-Exp-27 は、当初期待した「residual target にすると four-factor latent が `global/local` を明確に上回る」という強い結果ではなかった。
+
+最も良いのは `paper_global_local_residual` である。`series_mean` baseline の cell MAE 0.0721 に対し、0.0593 まで改善している。high residual top10 でも 0.2923 から 0.2794 に改善しており、`series_mean` residual を学習すること自体は有効である。
+
+一方、`four_factor_global_day_hour_residual` は 0.0671、`four_factor_global_day_hour_interaction_residual` は 0.0614 で、どちらも `paper_global_local_residual` には届かなかった。特に day/hour のみの latent split は high residual top10 の改善も小さい。
+
+したがって、2-Exp-27 からは次のように読むべきである。
+
+```text
+残差 target にすることは有効だった。
+しかし、latent を global/day/hour/interaction に分けるだけでは、
+元論準拠の global/local residual reference を明確に上回らなかった。
+```
+
+これは重要な失敗寄りの結果である。残差に移せば自動的に four-factor latent が効く、という論調は避ける必要がある。
+
+## 成分利用の兆候
+
+性能では `paper_global_local_residual` が最も良いが、`four_factor_global_day_hour_interaction_residual` には成分利用の兆候がある。
+
+ablation は次の通り。
+
+| model | zero global delta | zero day delta | zero hour delta | zero interaction delta |
+|---|---:|---:|---:|---:|
+| `paper_global_local_residual` | +0.0052 | - | - | - |
+| `four_factor_global_day_hour_residual` | +0.0053 | -0.0033 | -0.0021 | - |
+| `four_factor_global_day_hour_interaction_residual` | -0.0000 | +0.0159 | +0.0231 | +0.0006 |
+
+`four_factor_global_day_hour_interaction_residual` では、day を消すと MAE が +0.0159、hour を消すと +0.0231 悪化する。これは、interaction 付きモデルの内部では day/hour 成分が補正に使われていることを示す。
+
+ただし、最終的な corrected MAE では `paper_global_local_residual` より悪い。つまり、成分は使われているが、latent concat 型の decoder ではそれが全体性能に十分つながっていない。
+
+この結果は、これまでの output decomposition 系の結果と整合する。
+
+```text
+潜在表現を分けるだけでは、decoder 内で情報が混ざる。
+成分を解釈可能にし、補正性能にも結びつけるには、
+出力そのものを global/day/hour/interaction に分ける設計が必要である。
+```
+
+## Exp-26 との比較
+
+Exp-26 direct target:
+
+| target | model | WAPE |
+|---|---|---:|
+| direct | `global + local` | 0.6233 |
+| direct | `global + day + hour` | 0.6133 |
+| direct | `global + day + hour + interaction` | 0.6267 |
+
+Exp-27 residual target:
+
+| target | model | corrected WAPE |
+|---|---|---:|
+| residual | `global + local` | 0.9577 |
+| residual | `global + day + hour` | 1.0838 |
+| residual | `global + day + hour + interaction` | 0.9917 |
+
+WAPE は direct target と residual target でスケールが異なるため、絶対値を直接比較するべきではない。見るべきなのは、各 target 内での relative ordering である。
+
+direct target では `global + day + hour` が `global + local` より小幅に良い。一方、residual target では `global + local` が最も良い。したがって、2-Exp-27 は「residual にすれば latent の four-factor split がより有利になる」という仮説を支持しない。
+
+ただし、residual target では全モデルが baseline を補正している。特に `paper_global_local_residual` と interaction 付きモデルは baseline MAE を大きく下げた。つまり、支持されるのは次の主張である。
+
+```text
+series_mean baseline 後の residual には学習可能な構造が残る。
+しかし、その構造を単に latent split で表すだけでは不十分であり、
+出力分解や centering constraint が必要である。
+```
+
+## Proposal への反映
+
+2-Exp-27 の結果を受けて、proposal は強めるのではなく、次のように精密化する。
+
+避けるべき主張:
+
+```text
+残差 target にすると、global/day/hour/interaction latent split が global/local より明確に良くなる。
+```
+
+採用する主張:
+
+```text
+通常予測では day/hour split が小幅に効くが、interaction は不安定である。
+series_mean baseline 後の residual には学習可能な構造が残り、baseline 補正は可能である。
+しかし、潜在表現を細分化するだけでは global/local reference を安定して上回らない。
+したがって、本研究の主張は latent split そのものではなく、
+残差出力を global/day/hour/interaction 成分に分け、
+centering などの制約で出力空間の意味を固定する点に置く。
+```
+
+この結果により、2-Exp-11 / 2-Exp-22 で示した output decomposition の重要性が強まる。2-Exp-27 は「latent split だけでは足りない」という bridge / negative result として扱う。

@@ -2,7 +2,7 @@
 
 ## 現在地
 
-更新日: 2026-06-09
+更新日: 2026-06-19
 
 当初の 12 週間計画のうち、実装と探索の多くは前倒しで進んでいる。
 
@@ -20,15 +20,23 @@
 - 2-Exp-24 では、`same_hour_recent_mean_d7` residual も MAE は少し改善したが、hour component の対応は負相関になり、解釈可能な分解としては不安定だった。
 - 2-Exp-25 で、`series_mean` residual の改善は先頭系列ブロックだけでなく、開始位置をずらした 3 つの 6000 系列ブロックでも再現した。
 - 2-Exp-25 でも、`same_hour_recent_mean_d7` residual は改善幅が小さく、hour component の対応は負相関であり、強い基準値下では解釈可能な残差構造が残りにくいことを確認した。
+- 2-Exp-26 で、元論文に近い `global/local` 2 成分から `global/day/hour/(interaction)` へ拡張する比較を行った。`day/hour` split は direct target でも小さな改善を示したが、interaction は安定した改善にはならなかった。
+- 2-Exp-27 で、同じ比較を `series_mean` residual に対して行った。residual 学習自体は baseline を改善したが、4 成分 latent が `global/local` residual を常に上回るわけではなかった。
+- 周辺研究レビューを踏まえると、本研究は「latent を細かく分ける研究」ではなく、強い baseline 後に残る構造を output-level decomposition と centering constraints で説明する研究として固定するのがよい。
 - bias 制約つき calibration は bias を抑え、高残差上位 10% の改善を強める一方、全体 MAE は `mae_grid_reference` より悪化する。
 
 したがって、論文の主張は次に寄せるのが現実的である。
 
 ```text
-提案する残差分解は、強い baseline を置き換える手法ではなく、
-baseline 後の残差に残る day/hour 構造を分解し、
-条件が合う場合に予測補正と外れケース改善を与える。
+提案する残差分解は、強い baseline を置き換える手法ではない。
+元論文の global/local 表現分離を出発点にしつつ、
+baseline 後の残差に残る series/day/hour/interaction 構造を
+出力空間で制約付きに分解し、
+条件が合う場合に予測補正、外れケース改善、成分解釈を与える。
 ```
+
+現時点で新しい大規模実験を増やす優先度は高くない。
+優先すべき作業は、研究の方向性を固定し、その方向に合わせて定式化、関連研究、実験結果の読み方を揃えることである。
 
 ## あと必要な実験数
 
@@ -44,11 +52,70 @@ baseline 後の残差に残る day/hour 構造を分解し、
 | --- | --- | --- |
 | `2-Exp-24` | FreshRetailNet の系列数感度確認 | 完了 |
 | `2-Exp-25` | FreshRetailNet の系列ブロック頑健性確認 | 完了 |
-| `2-Exp-26` | 基準値選択と target 設計の自動化に向けた診断 | 任意 |
-| `2-Exp-27` | 実データの interaction 成分が出る条件の探索 | 任意 |
+| `2-Exp-26` | 元論文 `global/local` から 4 成分分割への橋渡し | 完了 |
+| `2-Exp-27` | direct target と residual target の最小比較 | 完了 |
 | `2-Exp-28` | 異常検知・運用支援への応用例整理 | 任意 |
 
-つまり、論文 1 本の骨格に必要な実験は揃っている。2-Exp-24 と 2-Exp-25 により、「系列数を増やしても保たれるか」「系列ブロックを変えても保たれるか」は補強できた。次の実験は主張の中心を作るためではなく、限界として残っている「基準値選択に依存する」「実データ interaction が弱い」という点を補強するために行う。
+つまり、論文 1 本の骨格に必要な実験は揃っている。
+2-Exp-24 と 2-Exp-25 により、「系列数を増やしても保たれるか」「系列ブロックを変えても保たれるか」は補強できた。
+2-Exp-26 と 2-Exp-27 により、元論文に近い global/local 分離から残差の output decomposition へ進む論理も整理できた。
+
+ここから先の追加実験は、主張の中心を作るためではなく、限界として残っている「基準値選択に依存する」「実データ interaction が弱い」「latent split だけでは成分解釈を保証しない」という点を補足するために行う。
+
+## 直近で自分がやること
+
+結論として、直近の主作業は **方向性の固定と、それに向かうための論理補強** である。
+定式化と実験は必要だが、どちらも新しい主張を増やすためではなく、固定した方向性を支える範囲に絞る。
+
+| 作業 | 優先度 | 目的 | 完了条件 |
+|---|---:|---|---|
+| 方向性の固定 | 最優先 | 論文の中心を residual output decomposition に固定する | Introduction / Method / Experiments で同じ主張になっている |
+| 定式化 | 高 | `y=b+r`, `r=g+a+c+u+eps`, centering constraints, correction `b+\hat r` を明確に書く | Method 節だけ読めば、何を分解しているか分かる |
+| 論理補強 | 高 | 周辺研究と Exp-26/27 を使い、なぜ latent split だけではなく output decomposition なのか説明する | Related Work / Discussion に橋渡しの説明がある |
+| 実験整理 | 高 | 既存実験から本文表と appendix 表を選ぶ | Main table 3 個、main figure 2〜3 個が決まっている |
+| 追加実験 | 低 | 指導教員から不足を指摘された場合の補強 | 具体的な弱点が出た場合だけ実施 |
+
+### 定式化でやること
+
+Method 節では、複雑な理論を増やすより、以下を一貫して書く。
+
+```text
+y_{i,d,h} = b_{i,d,h} + r_{i,d,h}
+r_{i,d,h} = g_i + a_{i,d} + c_{i,h} + u_{i,d,h} + eps_{i,d,h}
+hat y_{i,d,h} = b_{i,d,h} + hat r_{i,d,h}
+```
+
+加えて、day/hour/interaction の centering constraints を書く。
+ここでの主張は「潜在変数が完全に同定される」ではなく、「出力成分に構造制約を置くことで、補正値を series/day/hour/interaction として読めるようにする」である。
+
+### 実験でやること
+
+現時点では、新規実験を増やすより、既存結果を論文の問いに対応づける。
+
+| 問い | 使う実験 |
+|---|---|
+| 成分が存在すれば回復できるか | 2-Exp-22 |
+| 実データで baseline を補正できるか | 2-Exp-17〜20 |
+| 可視的に hour 構造が残っているか | 2-Exp-21 |
+| 系列数・系列ブロックを変えても成立するか | 2-Exp-24, 2-Exp-25 |
+| 元論文の global/local から飛躍していないか | 2-Exp-26 |
+| residual にすれば常に 4 成分が良いのか | 2-Exp-27 |
+
+2-Exp-27 の結果から、「residual なら常に 4 成分 latent が良い」とは書かない。
+書くべきことは、「residual target は baseline 改善に有効だが、成分解釈を安定させるには latent split ではなく output decomposition と centering が必要である」である。
+
+### 論理補強でやること
+
+周辺研究は次の流れで使う。
+
+| 周辺研究の流れ | 本研究での受け方 |
+|---|---|
+| FHVAE / DSVAE / C-DSVAE | static/dynamic や global/local の表現分離は重要だが、latent だけでは成分の意味が曖昧になり得る |
+| TS2Vec / TS-TCC / TF-C | 時系列表現学習は有効だが、需要予測の補正値を day/hour/interaction として読む目的とは少し違う |
+| Deep Factors / DeepGLO / CoST | global/local forecasting や seasonal decomposition と接続できる |
+| Shapelet / ROCKET / anomaly 系 | 外れケース、高残差 subset、運用支援の評価につなげられる |
+
+この整理により、提案手法は「既存の表現学習を否定する」のではなく、「小売需要補正では、表現分離を residual output decomposition として制約付きに実装する必要がある」と位置づける。
 
 ## Revised Week 1: 統計検証と採用モデル決定
 
@@ -258,35 +325,44 @@ hour component residual profile corr も mae_grid_reference で 0.9754〜0.9957 
 same_hour_recent_mean_d7 は各 block で MAE がわずかに改善するが、hour corr は -0.8870〜-0.8085 と負であり、解釈可能な分解としては弱い。
 ```
 
-## Revised Week 6.75: 追加検証 3 - 基準値選択と interaction 探索
+## Revised Week 6.75: 橋渡し検証 - 元論文から提案手法への接続
 
 期間:
 
 ```text
-2026-06-24 〜 2026-07-01
+2026-06-18 〜 2026-06-24
 ```
 
-### 実験候補
+### 実験
 
-- `2-Exp-26`: residual target / baseline selection diagnostics
-- `2-Exp-27`: real-data interaction condition search
+- `2-Exp-26`: 元論文準拠の `global/local` 2 成分から `global/day/hour/(interaction)` への拡張
+- `2-Exp-27`: direct target と `series_mean` residual target の最小比較
 
 ### 目的
 
-2-Exp-26 では、どの系列で `series_mean` がよく、どの系列で `same_hour_recent_mean` がよいかを診断する。
+2-Exp-26 では、いきなり residual output decomposition を提案するのではなく、元論文の `global/local` 分離を小売需要へ移植し、local を day/hour/interaction に細分化するだけで何が起きるかを見る。
 
-2-Exp-27 では、休日、値引き、欠品、天気などの条件と時間帯が組み合わさる場面を集め、実データで interaction 成分が見えるかを確認する。
+2-Exp-27 では、同じ比較を residual target に移し、direct target と residual target の違いを最小構成で確認する。
+これにより、「元論文からの自然な拡張」と「残差側へ移る必要性」を同時に整理する。
 
-### 実施判断
+### 結果の読み方
 
-2-Exp-25 は良好だったため、2-Exp-26/27 は必須ではない。
+- 2-Exp-26 では、`four_factor_global_day_hour` が direct target で小さく改善したが、interaction 追加は安定しなかった。
+- 2-Exp-27 では、residual target は baseline を改善したが、4 成分 latent が `global/local` residual を常に上回るわけではなかった。
+- したがって、proposal では「4 成分 latent に分ければ良い」とは書かない。
+- 書くべきことは、「元論文の global/local 分離は出発点として有効だが、小売需要の補正では、baseline 後の residual を output-level に分解し、centering constraints で成分の読みを固定する必要がある」である。
 
-それでも次のどちらかを本文で強めたい場合に実施する。
+### 完了条件
 
-- 本文執筆時に、`series_mean_all` の選択が恣意的に見える。
-- 実データで interaction 成分が弱い理由を、より具体的な条件分析として示したい。
+- 2-Exp-26/27 の結果が `doc/proposal/Proposal-zemi.md` と実験ドキュメントに反映されている。
+- Related Work で、latent representation learning と output decomposition の違いを説明できる。
+- Discussion で、`residual なら常に良い` ではなく `baseline と residual structure に依存する` と書ける。
 
-該当しなければ、2-Exp-26/27 は appendix または今後課題に回し、執筆を優先する。
+状態:
+
+```text
+完了。2-Exp-26/27 は、主性能を更新するためではなく、proposal の論理の飛躍を減らす橋渡し実験として使う。
+```
 
 ## Revised Week 6.9: 応用例整理
 

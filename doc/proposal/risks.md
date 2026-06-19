@@ -174,6 +174,21 @@ synthetic では強く、FreshRetailNet では弱い。
 | 本文表が多すぎる | 2-Exp-23 の statistical table は 56 行 | 本文用と appendix 用に分ける |
 | target selection が恣意的に見える | `series_mean_all` が主成功例 | 2-Exp-16/23 の target sensitivity として説明 |
 
+2-Exp-26/27 後に追加された重要なリスクは次である。
+
+| リスク | 現状 | 論文での扱い |
+|---|---|---|
+| latent split だけでは proposal の中心にならない | direct では day/hour が小幅改善、residual では `global/local` が最良 | 主張を output decomposition + constraints に置く |
+| 周辺研究との差分が latent disentanglement に見えやすい | 元論文との近さから誤読されやすい | related work で latent 分離と output 分解の違いを明記 |
+| residual target が恣意的に見える | baseline により residual structure が変わる | baseline/residual 診断を前処理として位置づける |
+
+関連研究レビューを踏まえると、今後の改良は「より多くの latent を追加する」方向ではなく、次を優先する。
+
+- output component の制約を明確にする。
+- residual structure が残る baseline を診断する。
+- high residual case と bias を評価軸に入れる。
+- temporal smoothness や self-supervised pretraining は今後課題に回す。
+
 ## 8. 中止判断
 
 以下が 2026-07-31 時点で満たせない場合、投稿論文としての主張は弱くなる。

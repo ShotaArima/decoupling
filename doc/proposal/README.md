@@ -38,6 +38,10 @@ $$
 
 この結果は、day/hour 分割が小売データに合う導入であることを示す一方で、売上全体を直接 4 成分に分けるだけでは interaction の意義が見えにくいことも示している。そのため本研究では、基準値で説明できる主効果を除いた残差に対して、day/hour/interaction の表現学習と出力分解を行う。
 
+さらに 2-Exp-27 では、`series_mean` residual に対して同じ latent split を比較した。全モデルが baseline MAE 0.0721 を補正したが、最も良かったのは `global/local` residual reference で corrected MAE 0.0593 だった。day/hour split は 0.0671、interaction 付きは 0.0614 であり、潜在表現を細分化するだけでは十分ではなかった。
+
+このため、proposal の中心は「latent を細かく分けること」ではなく、**残差出力そのものを global/day/hour/interaction 成分に分け、制約によって各成分の意味を固定すること**に置く。
+
 ## 中心仮説
 
 残差 $r_{i,d,h}$ は、次のような成分に分解できる。
@@ -230,6 +234,7 @@ synthetic では interaction の必要性を確認できたが、FreshRetailNet 
 
 ## ドキュメント構成
 
+- [related_work_and_improvement.md](related_work_and_improvement.md): 周辺研究の整理、現状課題、改良方針
 - [theory.md](theory.md): 数理的な保証、識別可能性、収束の考え方
 - [experiments.md](experiments.md): 論文レベルに必要な実験一覧
 - [schedule.md](schedule.md): 実験と執筆のスケジュール
