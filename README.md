@@ -92,6 +92,19 @@ Run on FreshRetailNet after preparing local parquet files:
 uv run decoupled-ts retail-experiment --config configs/retail_multigrain_freshretailnet.json
 ```
 
+To isolate the incremental claim from the original paper-style decomposition, compare the two-component `global + local` model against the four-factor `global + day + hour + interaction` split without using the residual-target setup. These Exp-26 configs also enable a paper-style counterfactual global regularizer: decode a history after replacing `z_global`, re-encode the generated history globally, and penalize cases where the generated history is closer to the original global latent than to the counterfactual one.
+
+```bash
+uv run decoupled-ts retail-experiment --config configs/2-Exp-26_global_local_to_four_factor_smoke.json
+uv run decoupled-ts retail-experiment --config configs/2-Exp-26_global_local_to_four_factor_synthetic.json
+uv run decoupled-ts retail-experiment --config configs/2-Exp-26_global_local_to_four_factor_freshretailnet.json
+```
+
+The key variants are:
+
+- `paper_global_local`: the original-style two-component split, with one global latent and one local latent per day-hour cell.
+- `four_factor_global_day_hour_interaction`: the proposed four-factor split, with separate global, day, hour, and day-hour interaction latents.
+
 The runner trains these variants from the config:
 
 - `baseline_flatten_mlp`
