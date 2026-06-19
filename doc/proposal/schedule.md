@@ -54,13 +54,14 @@ baseline 後の残差に残る series/day/hour/interaction 構造を
 | `2-Exp-25` | FreshRetailNet の系列ブロック頑健性確認 | 完了 |
 | `2-Exp-26` | 元論文 `global/local` から 4 成分分割への橋渡し | 完了 |
 | `2-Exp-27` | direct target と residual target の最小比較 | 完了 |
-| `2-Exp-28` | 異常検知・運用支援への応用例整理 | 任意 |
+| `2-Exp-28` | latent split と output decomposition の直接比較 | 追加実験 |
 
 つまり、論文 1 本の骨格に必要な実験は揃っている。
 2-Exp-24 と 2-Exp-25 により、「系列数を増やしても保たれるか」「系列ブロックを変えても保たれるか」は補強できた。
 2-Exp-26 と 2-Exp-27 により、元論文に近い global/local 分離から残差の output decomposition へ進む論理も整理できた。
 
 ここから先の追加実験は、主張の中心を作るためではなく、限界として残っている「基準値選択に依存する」「実データ interaction が弱い」「latent split だけでは成分解釈を保証しない」という点を補足するために行う。
+その中で 2-Exp-28 は、latent split と output decomposition を同じ residual target 上で直接比較し、proposal の主張を閉じるための最小追加実験として扱う。
 
 ## 直近で自分がやること
 
@@ -100,6 +101,7 @@ hat y_{i,d,h} = b_{i,d,h} + hat r_{i,d,h}
 | 系列数・系列ブロックを変えても成立するか | 2-Exp-24, 2-Exp-25 |
 | 元論文の global/local から飛躍していないか | 2-Exp-26 |
 | residual にすれば常に 4 成分が良いのか | 2-Exp-27 |
+| latent split より output decomposition を主提案にする根拠はあるか | 2-Exp-28 |
 
 2-Exp-27 の結果から、「residual なら常に 4 成分 latent が良い」とは書かない。
 書くべきことは、「residual target は baseline 改善に有効だが、成分解釈を安定させるには latent split ではなく output decomposition と centering が必要である」である。
