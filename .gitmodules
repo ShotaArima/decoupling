@@ -1,0 +1,3 @@
+[submodule "doc/conference/apiems2026/paper"]
+	path = doc/conference/apiems2026/paper
+	url = git@github.com:ShotaArima/peper-APIEMS2026.git
