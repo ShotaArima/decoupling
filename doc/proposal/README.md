@@ -40,6 +40,11 @@ $$
 
 さらに 2-Exp-27 では、`series_mean` residual に対して同じ latent split を比較した。全モデルが baseline MAE 0.0721 を補正したが、最も良かったのは `global/local` residual reference で corrected MAE 0.0593 だった。day/hour split は 0.0671、interaction 付きは 0.0614 であり、潜在表現を細分化するだけでは十分ではなかった。
 
+2-Exp-28 では、同じ `series_mean` residual 上で latent split 系と output decomposition 系を直接比較した。
+centered output decomposition は corrected MAE 0.0572 まで改善し、latent split 系の最良である `paper_global_local_residual` の 0.0609 を上回った。
+高残差上位 10% でも、latent split 系は baseline 0.2923 に対して同等または悪化したが、`output_decomp_centered` は 0.2656、`output_decomp_centered_no_interaction` は 0.2681 まで改善した。
+このため、主提案を latent split ではなく output decomposition + centering に置く論理は、Exp-28 によって強められる。
+
 このため、proposal の中心は「latent を細かく分けること」ではなく、**残差出力そのものを global/day/hour/interaction 成分に分け、制約によって各成分の意味を固定すること**に置く。
 
 ## 中心仮説
@@ -113,6 +118,9 @@ $$
 | 2-Exp-21 | hour profile と heatmap 可視化 | 成功例と限界例を図で示せる |
 | 2-Exp-22 | synthetic difficulty final | 成分回復、centering、interaction の必要性を主表にできる |
 | 2-Exp-23 | paper table aggregation | 論文用の主要表を再生成可能に固定 |
+| 2-Exp-26 | global/local から 4 成分 split への橋渡し | 元論文からの論理の飛躍を減らす |
+| 2-Exp-27 | direct/residual bridge | residual target は有効だが latent split だけでは不十分 |
+| 2-Exp-28 | latent split vs output decomposition | output decomposition + centering を主提案に置く根拠 |
 
 ## ここまでで分かったこと
 

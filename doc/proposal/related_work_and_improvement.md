@@ -26,7 +26,7 @@ series / day / hour / interaction の出力成分として分解し、
 
 | 課題 | 現状 | proposal での扱い |
 |---|---|---|
-| latent split だけでは弱い | 2-Exp-27 で `global/local` residual が latent four-factor より良い | 出力分解を主張の中心にする |
+| latent split だけでは弱い | 2-Exp-27 で `global/local` residual が latent four-factor より良い。2-Exp-28 で centered output decomposition が latent split 系を上回る | 出力分解を主張の中心にする |
 | direct forecasting では interaction が不安定 | 2-Exp-26 で interaction 付きは WAPE が悪化 | raw demand ではなく residual target へ進む理由にする |
 | residual の有効性は baseline に依存する | `series_mean` では改善、same-hour 系では改善が小さい | 適用条件として明記する |
 | 実データ interaction が弱い | synthetic では強いが FreshRetailNet では主張しにくい | interaction は synthetic と limitation 中心 |
@@ -49,7 +49,7 @@ FHVAE, DSVAE, C-DSVAE, S3VAE, GP-VAE, Decoupling Local and Global Representation
 
 本研究との違いは、既存研究の多くが **latent space の分離**を主対象にするのに対し、本研究は **output space の成分分解**を主対象にする点である。
 
-2-Exp-27 の結果は、この違いを支持している。latent を `global/day/hour/interaction` に分けるだけでは `global/local` reference を上回らなかった。したがって、本研究では latent の完全な識別ではなく、出力成分が ANOVA 的制約を満たすことを重視する。
+2-Exp-27 と 2-Exp-28 の結果は、この違いを支持している。latent を `global/day/hour/interaction` に分けるだけでは `global/local` reference を安定して上回らなかった一方、同じ `series_mean` residual 上で centered output decomposition は latent split 系より低い corrected MAE と良い high-residual correction を示した。したがって、本研究では latent の完全な識別ではなく、出力成分が ANOVA 的制約を満たすことを重視する。
 
 ### 2. Self-Supervised / Contrastive 時系列表現学習
 
@@ -113,11 +113,12 @@ Shapelets, INSHAPE, ROCKET, InceptionTime は、局所的な subsequence pattern
 出力された residual correction が ANOVA 的に読めることを保証対象にする。
 ```
 
-2-Exp-26 と 2-Exp-27 は、この立場を補強する。
+2-Exp-26、2-Exp-27、2-Exp-28 は、この立場を補強する。
 
 - direct target では day/hour split は小幅改善に留まる。
 - residual target でも latent split だけでは `global/local` を安定して上回らない。
-- したがって、主張の中心は latent split ではなく output decomposition に置くべきである。
+- 同じ residual target 上で、centered output decomposition は latent split 系より corrected MAE と high-residual correction が良い。
+- したがって、主張の中心は latent split ではなく output decomposition + centering に置くべきである。
 
 ## 改良方針
 
@@ -136,6 +137,7 @@ output_decomp_centered
 - synthetic で成分回復が最も明確。
 - centering なしでは成分相関が崩れる。
 - 2-Exp-27 により、latent split だけでは不十分であることが確認された。
+- 2-Exp-28 により、同じ residual target 上で output decomposition + centering が latent split 系を上回ることが確認された。
 
 ### 改良 2: Baseline/residual 診断を前処理として明示する
 

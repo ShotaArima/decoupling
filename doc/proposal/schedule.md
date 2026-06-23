@@ -30,6 +30,7 @@
 - 2-Exp-25 でも、`same_hour_recent_mean_d7` residual は改善幅が小さく、hour component の対応は負相関であり、強い基準値下では解釈可能な残差構造が残りにくいことを確認した。
 - 2-Exp-26 で、元論文に近い `global/local` 2 成分から `global/day/hour/(interaction)` へ拡張する比較を行った。`day/hour` split は direct target でも小さな改善を示したが、interaction は安定した改善にはならなかった。
 - 2-Exp-27 で、同じ比較を `series_mean` residual に対して行った。residual 学習自体は baseline を改善したが、4 成分 latent が `global/local` residual を常に上回るわけではなかった。
+- 2-Exp-28 で、latent split 系と output decomposition 系を同じ `series_mean` residual 上で直接比較した。centered output decomposition は corrected MAE 0.0572 まで改善し、latent split 系の最良 0.0609 を上回った。
 - 周辺研究レビューを踏まえると、本研究は「latent を細かく分ける研究」ではなく、強い baseline 後に残る構造を output-level decomposition と centering constraints で説明する研究として固定するのがよい。
 - bias 制約つき calibration は bias を抑え、高残差上位 10% の改善を強める一方、全体 MAE は `mae_grid_reference` より悪化する。
 
@@ -62,7 +63,7 @@ baseline 後の残差に残る series/day/hour/interaction 構造を
 | `2-Exp-25` | FreshRetailNet の系列ブロック頑健性確認 | 完了 |
 | `2-Exp-26` | 元論文 `global/local` から 4 成分分割への橋渡し | 完了 |
 | `2-Exp-27` | direct target と residual target の最小比較 | 完了 |
-| `2-Exp-28` | latent split と output decomposition の直接比較 | 追加実験 |
+| `2-Exp-28` | latent split と output decomposition の直接比較 | 完了 |
 
 つまり、論文 1 本の骨格に必要な実験は揃っている。
 2-Exp-24 と 2-Exp-25 により、「系列数を増やしても保たれるか」「系列ブロックを変えても保たれるか」は補強できた。
@@ -70,6 +71,7 @@ baseline 後の残差に残る series/day/hour/interaction 構造を
 
 ここから先の追加実験は、主張の中心を作るためではなく、限界として残っている「基準値選択に依存する」「実データ interaction が弱い」「latent split だけでは成分解釈を保証しない」という点を補足するために行う。
 その中で 2-Exp-28 は、latent split と output decomposition を同じ residual target 上で直接比較し、proposal の主張を閉じるための最小追加実験として扱う。
+結果として、centered output decomposition が corrected MAE と high residual top10 の両方で latent split 系より良く、主提案を output decomposition + centering に置く方針を強められる。
 
 ## 直近で自分がやること
 
@@ -112,7 +114,8 @@ hat y_{i,d,h} = b_{i,d,h} + hat r_{i,d,h}
 | latent split より output decomposition を主提案にする根拠はあるか | 2-Exp-28 |
 
 2-Exp-27 の結果から、「residual なら常に 4 成分 latent が良い」とは書かない。
-書くべきことは、「residual target は baseline 改善に有効だが、成分解釈を安定させるには latent split ではなく output decomposition と centering が必要である」である。
+2-Exp-28 の結果から、「同じ residual target 上では、latent split より output decomposition + centering の方が補正性能と hour profile 対応を両立しやすい」と書ける。
+ただし、実データの interaction 寄与は小さいため、FreshRetailNet では hour structure と high-residual correction を中心に主張する。
 
 ### 論理補強でやること
 

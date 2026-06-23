@@ -519,6 +519,7 @@ FreshRetailNet では真の成分は分からない。
 | 2-Exp-25 | `same_hour_recent_mean_d7_block0/1/2_6k` | 改善幅は 0.0008〜0.0017 程度、hour corr は全て負 | 補正は小さく、成分解釈は弱い |
 | 2-Exp-26 | direct forecasting | `global/day/hour` は `global/local` より WAPE を 0.6233 から 0.6133 に小幅改善、interaction 付きは WAPE 0.6267 | 通常予測では day/hour 分割は導入できるが、interaction までの強い根拠は弱い |
 | 2-Exp-27 | `series_mean` residual latent split | `global/local` residual が corrected MAE 0.0593、day/hour は 0.0671、interaction 付きは 0.0614 | residual は学習可能だが、latent split だけでは不十分 |
+| 2-Exp-28 | latent split vs output decomposition | centered output decomposition が corrected MAE 0.0572、high residual top10 も 0.2656〜0.2681 へ改善 | 主提案を latent split ではなく output decomposition + centering に置く根拠 |
 
 ## 4.4 なぜ残差を主対象にするか
 
@@ -548,6 +549,10 @@ FreshRetailNet では真の成分は分からない。
 
 2-Exp-27 では、同じ `global/local` reference と day/hour split を `series_mean` residual に適用した。結果として、全モデルが baseline MAE 0.0721 を補正したが、最も良かったのは `global/local` residual で corrected MAE 0.0593 だった。day/hour は 0.0671、interaction 付きは 0.0614 であり、latent を細かく分けるだけでは `global/local` reference を上回らなかった。
 
+さらに 2-Exp-28 では、同じ `series_mean` residual 上で latent split 系と output decomposition 系を直接比較した。
+結果として、centered output decomposition は corrected MAE 0.0572 まで改善し、latent split 系の最良である `paper_global_local_residual` の 0.0609 を上回った。
+高残差上位 10% でも、latent split 系は baseline 0.2923 に対して同等または悪化した一方、`output_decomp_centered_no_interaction` は 0.2681、`output_decomp_centered` は 0.2656 まで改善した。
+
 この結果から、次のように整理する。
 
 ```text
@@ -556,6 +561,10 @@ FreshRetailNet では真の成分は分からない。
 したがって、本研究の主張は latent split そのものではなく、
 残差出力を global/day/hour/interaction に分け、centering 制約で意味を固定する出力分解に置く。
 ```
+
+ただし、2-Exp-28 でも実データの interaction 成分の寄与は小さかった。
+`output_decomp_centered` では、hour 成分を消すと MAE が 0.0050 悪化した一方、interaction を消してもほぼ変化しなかった。
+したがって、FreshRetailNet で強く主張するのは interaction ではなく、`series_mean` residual に残る hour structure と high-residual correction である。
 
 ## 4.5 現時点で言えること
 
@@ -569,6 +578,7 @@ FreshRetailNet では真の成分は分からない。
 
 6. 通常予測では day/hour 分割の効果は小幅であり、interaction 成分は不安定である。
 7. residual target でも、latent split だけでは `global/local` reference を安定して上回らないため、出力分解と制約が必要である。
+8. 2-Exp-28 では、同じ `series_mean` residual 上で centered output decomposition が latent split 系より低い corrected MAE と良い high-residual correction を示した。
 
 ## 4.6 現時点で言えないこと
 
