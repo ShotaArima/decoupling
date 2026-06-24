@@ -1,0 +1,50 @@
+{
+  "seed": 11,
+  "dataset": {
+    "name": "synthetic_retail",
+    "n_series": 96,
+    "days": 14,
+    "hours": 24,
+    "forecast_days": 1,
+    "valid_ratio": 0.15,
+    "test_ratio": 0.15,
+    "noise_std": 0.15,
+    "stockout_rate": 0.06
+  },
+  "model": {
+    "hidden_dim": 32,
+    "global_dim": 4,
+    "local_dim": 4,
+    "day_dim": 4,
+    "hour_dim": 4,
+    "interaction_dim": 3,
+    "dropout": 0.1
+  },
+  "loss": {
+    "reconstruction_weight": 0.02,
+    "history_sales_weight": 0.05,
+    "decouple_weight": 0.001
+  },
+  "counterfactual_regularization": {
+    "enabled": true,
+    "weight": 0.05,
+    "margin": 0.0
+  },
+  "train": {
+    "batch_size": 32,
+    "epochs": 1,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "huber_delta": 25.0,
+    "num_workers": 0,
+    "pin_memory": false,
+    "device": "auto",
+    "output_dir": "runs/2-Exp-26_global_local_to_four_factor_smoke"
+  },
+  "experiments": [
+    {"name": "baseline_flatten_mlp", "type": "flatten_mlp"},
+    {"name": "paper_global_local", "type": "multigrain", "use_local": true, "use_day": false, "use_hour": false, "use_interaction": false},
+    {"name": "four_factor_global_day_hour_interaction", "type": "multigrain", "use_local": false, "use_day": true, "use_hour": true, "use_interaction": true}
+  ]
+}

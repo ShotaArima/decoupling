@@ -40,6 +40,29 @@ g_i
 
 この枠組みを小売需要に当てはめると、global は「店舗・商品ごとの基本的な売れやすさ」、local は「日や時間帯による一時的な変化」と考えられる。
 
+## 1.1.1 周辺研究の中での位置づけ
+
+時系列の表現分離には、大きく 4 つの流れがある。
+
+| 流れ | 代表例 | 本研究との関係 |
+|---|---|---|
+| static/dynamic または global/local の潜在分離 | FHVAE, DSVAE, C-DSVAE, Decoupling Local and Global Representations | 元論文の直接的な系譜 |
+| self-supervised / contrastive 表現学習 | TNC, TS2Vec, TS-TCC, TF-C | 良い時系列表現を作るが、成分の意味は暗黙的 |
+| global-local forecasting / decomposition | Deep Factors, DeepGLO, CoST, Autoformer, FEDformer, TimeMixer | 予測で大域構造と局所補正、trend/season 分解が有効であることを示す |
+| local pattern / anomaly evaluation | Shapelets, INSHAPE, Anomaly Transformer, TranAD | 局所パターンや high residual case を実用的に評価する流れ |
+
+これらの研究は、時系列には複数の因子が混ざっており、それを分けることが有効であることを示している。
+
+一方で、多くの研究は「潜在表現を分ける」または「trend/season のような粗い成分に分ける」ことが中心である。本研究では、そこから一歩進めて、強い基準値の後に残る residual correction そのものを、
+
+```text
+series / day / hour / day-hour interaction
+```
+
+という小売運用上の単位に分ける。
+
+このため、本研究は元論文の単純な拡張というより、local/global 分離の考えを residual output decomposition へ移す研究として位置づける。
+
 ## 1.2 元論文に近い Encoder / Decoder の形
 
 元論文に近い構成では、入力時系列 $x$ から global 表現と local 表現を作る。
@@ -452,6 +475,8 @@ m_{i,d,h}
 | 表の整理 | 2-Exp-23 | 論文用表を集約 | 本文表と appendix 表を分けられる |
 | 規模確認 | 2-Exp-24 | 系列数を増やす | 12k でも `series_mean` は改善 |
 | block 確認 | 2-Exp-25 | 系列開始位置を変える | 先頭系列だけに依存しない |
+| 元論からの接続 | 2-Exp-26 | 通常予測で `global/local` と day/hour split を比較 | day/hour は小幅改善、interaction は不安定 |
+| direct/residual bridge | 2-Exp-27 | `series_mean` residual で同じ latent split を比較 | residual は補正できるが、latent split だけでは `global/local` を上回らない |
 
 ## 4.2 合成データ(Synthetic) で言えること
 
@@ -492,8 +517,56 @@ FreshRetailNet では真の成分は分からない。
 | 2-Exp-24 | `same_hour_recent_mean_d7_12k` | baseline MAE 0.0574、corrected MAE 0.0546〜0.0547、hour corr は負 | 強い基準値では残差の hour 構造が読みにくい |
 | 2-Exp-25 | `series_mean_block0/1/2_6k` | MAE 改善幅 0.0173〜0.0190 | 先頭系列だけに依存しない |
 | 2-Exp-25 | `same_hour_recent_mean_d7_block0/1/2_6k` | 改善幅は 0.0008〜0.0017 程度、hour corr は全て負 | 補正は小さく、成分解釈は弱い |
+| 2-Exp-26 | direct forecasting | `global/day/hour` は `global/local` より WAPE を 0.6233 から 0.6133 に小幅改善、interaction 付きは WAPE 0.6267 | 通常予測では day/hour 分割は導入できるが、interaction までの強い根拠は弱い |
+| 2-Exp-27 | `series_mean` residual latent split | `global/local` residual が corrected MAE 0.0593、day/hour は 0.0671、interaction 付きは 0.0614 | residual は学習可能だが、latent split だけでは不十分 |
+| 2-Exp-28 | latent split vs output decomposition | centered output decomposition が corrected MAE 0.0572、high residual top10 も 0.2656〜0.2681 へ改善 | 主提案を latent split ではなく output decomposition + centering に置く根拠 |
 
-## 4.4 現時点で言えること
+## 4.4 なぜ残差を主対象にするか
+
+2-Exp-26 では、元論文に近い `global + local` 分解を通常の future total forecasting に移植し、同じ反実仮想 global 正則化の下で、local を `day/hour/interaction` に分ける比較を行った。
+
+結果として、`global + day + hour` は `global + local` より少し良かった。
+
+| model | MAE | WAPE | bias |
+|---|---:|---:|---:|
+| `paper_global_local` | 1.4850 | 0.6233 | -0.4676 |
+| `four_factor_global_day_hour` | 1.4611 | 0.6133 | -0.3787 |
+| `four_factor_global_day_hour_interaction` | 1.4931 | 0.6267 | -0.2662 |
+
+この結果から、local を day/hour に分けることは、小売需要に合った自然な拡張として導入できる。
+
+しかし、通常予測では interaction まで入れても MAE/WAPE は改善しなかった。これは、売上全体 $y$ には系列水準、商品差、店舗差、曜日性、時間帯性、欠品などが同時に含まれ、day/hour/interaction の役割が混ざりやすいためである。
+
+したがって、本研究では次のように問題を絞る。
+
+```text
+売上全体を直接 4 成分に分けるのではなく、
+まず基準値 b で説明しやすい主効果を取り除き、
+残った r = y - b に対して成分分解を行う。
+```
+
+この整理により、2-Exp-26 は「通常予測で 4 成分が常に勝つ」ことを示す実験ではなく、「元論文の global/local から day/hour 分割へ進む導入」として使う。
+
+2-Exp-27 では、同じ `global/local` reference と day/hour split を `series_mean` residual に適用した。結果として、全モデルが baseline MAE 0.0721 を補正したが、最も良かったのは `global/local` residual で corrected MAE 0.0593 だった。day/hour は 0.0671、interaction 付きは 0.0614 であり、latent を細かく分けるだけでは `global/local` reference を上回らなかった。
+
+さらに 2-Exp-28 では、同じ `series_mean` residual 上で latent split 系と output decomposition 系を直接比較した。
+結果として、centered output decomposition は corrected MAE 0.0572 まで改善し、latent split 系の最良である `paper_global_local_residual` の 0.0609 を上回った。
+高残差上位 10% でも、latent split 系は baseline 0.2923 に対して同等または悪化した一方、`output_decomp_centered_no_interaction` は 0.2681、`output_decomp_centered` は 0.2656 まで改善した。
+
+この結果から、次のように整理する。
+
+```text
+残差には学習可能な構造が残っている。
+しかし、潜在表現を細分化するだけでは、成分の役割が decoder 内で混ざり、安定した改善にはつながらない。
+したがって、本研究の主張は latent split そのものではなく、
+残差出力を global/day/hour/interaction に分け、centering 制約で意味を固定する出力分解に置く。
+```
+
+ただし、2-Exp-28 でも実データの interaction 成分の寄与は小さかった。
+`output_decomp_centered` では、hour 成分を消すと MAE が 0.0050 悪化した一方、interaction を消してもほぼ変化しなかった。
+したがって、FreshRetailNet で強く主張するのは interaction ではなく、`series_mean` residual に残る hour structure と high-residual correction である。
+
+## 4.5 現時点で言えること
 
 現時点で言えることは次である。
 
@@ -503,7 +576,11 @@ FreshRetailNet では真の成分は分からない。
 4. `series_mean` residual の改善は、系列数を増やしても、系列ブロックを変えても保たれた。
 5. synthetic では、真の成分がある条件で output decomposition が成分を回復できる。
 
-## 4.5 現時点で言えないこと
+6. 通常予測では day/hour 分割の効果は小幅であり、interaction 成分は不安定である。
+7. residual target でも、latent split だけでは `global/local` reference を安定して上回らないため、出力分解と制約が必要である。
+8. 2-Exp-28 では、同じ `series_mean` residual 上で centered output decomposition が latent split 系より低い corrected MAE と良い high-residual correction を示した。
+
+## 4.6 現時点で言えないこと
 
 一方で、次のことはまだ言えない。
 
@@ -513,6 +590,7 @@ FreshRetailNet では真の成分は分からない。
 | どんな基準値でも提案手法が改善する | 同時間帯の same-hour 系では改善幅が小さい |
 | 実データで interaction 成分が強く効く | FreshRetailNet では hour 成分が主な成功例 |
 | latent 表現そのものが完全に識別された | 保証しているのは出力成分の制約である |
+| residual にすれば latent split だけで十分である | 2-Exp-27 では `global/local` residual が latent four-factor より良かった |
 
 
 したがって、本研究の主張は
@@ -522,7 +600,7 @@ FreshRetailNet では真の成分は分からない。
 その残差を成分に分けて補正し、どの軸のズレなのかを説明する手法である。
 ```
 
-## 4.6 応用上の意味
+## 4.7 応用上の意味
 
 この分解ができると、単に予測値を出すだけでなく、次のような使い方ができる。
 

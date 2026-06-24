@@ -47,9 +47,11 @@ def make_model(config: dict[str, Any], variant: dict[str, Any], input_dim: int, 
             hours=hours,
             hidden_dim=int(model_cfg["hidden_dim"]),
             global_dim=int(model_cfg["global_dim"]),
+            local_dim=int(model_cfg.get("local_dim", model_cfg["day_dim"])),
             day_dim=int(model_cfg["day_dim"]),
             hour_dim=int(model_cfg["hour_dim"]),
             interaction_dim=int(model_cfg["interaction_dim"]),
+            use_local=bool(variant.get("use_local", False)),
             use_day=bool(variant.get("use_day", True)),
             use_hour=bool(variant.get("use_hour", True)),
             use_interaction=bool(variant.get("use_interaction", False)),
@@ -75,7 +77,16 @@ def loss_for_batch(model: nn.Module, batch: dict[str, torch.Tensor], out: dict[s
         recon_loss = ((out["reconstruction"] - grid).abs() * weights).sum() / weights.sum().clamp_min(1.0)
         sales_weights = weights[..., 0]
         sales_loss = ((out["sales_grid"] - grid[..., 0]).abs() * sales_weights).sum() / sales_weights.sum().clamp_min(1.0)
-        decouple = covariance_penalty([out["z_global"], out["z_day"], out["z_hour"]])
+        decouple_parts = [out["z_global"]]
+        if getattr(model, "use_local", False):
+            decouple_parts.append(out["z_local"])
+        if getattr(model, "use_day", False):
+            decouple_parts.append(out["z_day"])
+        if getattr(model, "use_hour", False):
+            decouple_parts.append(out["z_hour"])
+        if getattr(model, "use_interaction", False):
+            decouple_parts.append(out["z_interaction"])
+        decouple = covariance_penalty(decouple_parts)
         total = (
             total
             + float(config["loss"]["reconstruction_weight"]) * recon_loss
@@ -137,6 +148,43 @@ def reconstruction_weights(mask: torch.Tensor, config: dict) -> torch.Tensor:
     raise ValueError(f"unknown stockout_weighting mode: {mode}")
 
 
+def _sample_derangement(size: int, device: torch.device) -> torch.Tensor:
+    if size <= 1:
+        return torch.arange(size, device=device)
+    for _ in range(10):
+        perm = torch.randperm(size, device=device)
+        if bool(torch.all(perm != torch.arange(size, device=device))):
+            return perm
+    return torch.arange(size, device=device).roll(1)
+
+
+def counterfactual_regularization_loss(
+    model: nn.Module,
+    out: dict[str, torch.Tensor],
+    config: dict[str, Any],
+) -> dict[str, torch.Tensor]:
+    if not isinstance(model, RetailMultiGrainModel):
+        return {}
+    cf_cfg = config.get("counterfactual_regularization", {})
+    if not bool(cf_cfg.get("enabled", False)):
+        return {}
+    if out["z_global"].shape[0] <= 1:
+        return {}
+
+    perm = _sample_derangement(out["z_global"].shape[0], out["z_global"].device)
+    cf_global = out["z_global"][perm].detach()
+    original_global = out["z_global"].detach()
+    decoded = model.decode_history_from_parts(out, z_global=cf_global)
+    generated = decoded["reconstruction"]
+    generated_mask = torch.ones_like(generated)
+    reencoded_global = model.global_encoder(generated, generated_mask)
+    cf_distance = torch.mean(torch.square(reencoded_global - cf_global), dim=-1)
+    original_distance = torch.mean(torch.square(reencoded_global - original_global), dim=-1)
+    margin = float(cf_cfg.get("margin", 0.0))
+    cf_loss = nn.functional.softplus(cf_distance - original_distance + margin).mean()
+    return {"loss_counterfactual_global": cf_loss}
+
+
 def run_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -155,6 +203,16 @@ def run_epoch(
             optimizer.zero_grad(set_to_none=True)
         out = model(batch["x"], batch["mask"])
         losses = loss_for_batch(model, batch, out, config)
+        cf_losses = counterfactual_regularization_loss(model, out, config)
+        if cf_losses:
+            total_cf = torch.tensor(0.0, device=losses["loss"].device)
+            weights = config.get("counterfactual_regularization", {})
+            for key, value in cf_losses.items():
+                weight_key = key.replace("loss_counterfactual_", "") + "_weight"
+                total_cf = total_cf + float(weights.get(weight_key, weights.get("weight", 0.0))) * value
+                losses[key] = value.detach()
+            losses["loss_counterfactual"] = total_cf.detach()
+            losses["loss"] = losses["loss"] + total_cf
         if training:
             losses["loss"].backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), float(config["train"].get("grad_clip", 1.0)))
@@ -255,7 +313,16 @@ def collect_latent_arrays(model: nn.Module, loader: DataLoader, device: torch.de
     if not hasattr(model, "encode"):
         return {}
     model.eval()
-    parts: dict[str, list[np.ndarray]] = {"z_global": [], "z_day": [], "z_hour": []}
+    latent_keys = ["z_global"]
+    if getattr(model, "use_local", False):
+        latent_keys.append("z_local")
+    if getattr(model, "use_day", False):
+        latent_keys.append("z_day")
+    if getattr(model, "use_hour", False):
+        latent_keys.append("z_hour")
+    if getattr(model, "use_interaction", False):
+        latent_keys.append("z_interaction")
+    parts: dict[str, list[np.ndarray]] = {key: [] for key in latent_keys}
     labels = []
     day_weekday = []
     day_holiday = []
@@ -264,14 +331,15 @@ def collect_latent_arrays(model: nn.Module, loader: DataLoader, device: torch.de
         x = batch["x"].to(device)
         enc = model.encode(x, batch["mask"].to(device))
         for key in parts:
-            parts[key].append(enc[key].detach().cpu().numpy())
+            if key in enc:
+                parts[key].append(enc[key].detach().cpu().numpy())
         labels.append(batch["subgroup"].numpy())
         if config is not None:
             label_dict = extract_day_probe_labels(x.detach().cpu(), config)
             day_weekday.append(label_dict["weekday"])
             day_holiday.append(label_dict["holiday"])
             day_discount.append(label_dict["discount"])
-    arrays = {key: np.concatenate(values, axis=0) for key, values in parts.items()} | {"subgroup": np.concatenate(labels, axis=0)}
+    arrays = {key: np.concatenate(values, axis=0) for key, values in parts.items() if values} | {"subgroup": np.concatenate(labels, axis=0)}
     if day_weekday:
         arrays["day_weekday"] = np.concatenate(day_weekday, axis=0)
         arrays["day_holiday"] = np.concatenate(day_holiday, axis=0)
@@ -428,6 +496,11 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     variant_config = dict(config)
     if "loss_overrides" in variant:
         variant_config["loss"] = {**config["loss"], **variant["loss_overrides"]}
+    if "counterfactual_regularization_overrides" in variant:
+        variant_config["counterfactual_regularization"] = {
+            **config.get("counterfactual_regularization", {}),
+            **variant["counterfactual_regularization_overrides"],
+        }
     name = variant["name"]
     out_dir = root_out / name
     logger = setup_run_logger(out_dir, name=f"retail.{name}")
