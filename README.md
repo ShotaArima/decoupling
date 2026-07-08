@@ -168,7 +168,7 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-9_multiseed_structured
 uv run decoupled-ts residual-sweep --config configs/2-Exp-9_freshretailnet_subset_interaction.json
 ```
 
-To test output-decomposed residual components with explicit `global/day/hour/interaction` heads:
+To test residual components with explicit `global/day/hour/interaction` heads:
 
 ```bash
 uv run decoupled-ts residual-experiment --config configs/2-Exp-11_output_decomposition_smoke.json

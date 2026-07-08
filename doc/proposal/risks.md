@@ -67,7 +67,7 @@ interaction component は synthetic での成立条件として示し、FreshRet
 情報漏れを抑えすぎると、必要な情報まで消える可能性がある。
 
 2-Exp-23 時点では、leakage suppression は本文の主軸から外してよい。
-主提案は output decomposition + centering であり、leakage suppression は appendix または今後課題に回す。
+主提案は 4変数への分解と centering であり、leakage suppression は appendix または今後課題に回す。
 
 ### 対応
 
@@ -178,8 +178,8 @@ synthetic では強く、FreshRetailNet では弱い。
 
 | リスク | 現状 | 論文での扱い |
 |---|---|---|
-| latent split だけでは proposal の中心にならない | direct では day/hour が小幅改善、residual では `global/local` が最良 | 主張を output decomposition + constraints に置く |
-| 周辺研究との差分が latent disentanglement に見えやすい | 元論文との近さから誤読されやすい | related work で latent 分離と output 分解の違いを明記 |
+| latent split だけでは proposal の中心にならない | direct では day/hour が小幅改善、residual では `global/local` が最良 | 主張を 4変数への分解 + constraints に置く |
+| 周辺研究との差分が latent disentanglement に見えやすい | 元論文との近さから誤読されやすい | related work で latent 分離と 4変数への分解の違いを明記 |
 | residual target が恣意的に見える | baseline により residual structure が変わる | baseline/residual 診断を前処理として位置づける |
 
 関連研究レビューを踏まえると、今後の改良は「より多くの latent を追加する」方向ではなく、次を優先する。

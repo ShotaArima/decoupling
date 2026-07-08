@@ -61,7 +61,7 @@ series / day / hour / day-hour interaction
 
 という小売運用上の単位に分ける。
 
-このため、本研究は元論文の単純な拡張というより、local/global 分離の考えを residual output decomposition へ移す研究として位置づける。
+このため、本研究は元論文の単純な拡張というより、local/global 分離の考えを residual 4変数モデル へ移す研究として位置づける。
 
 ## 1.2 元論文に近い Encoder / Decoder の形
 
@@ -468,7 +468,7 @@ m_{i,d,h}
 | 残差診断 | 2-Exp-1 | 基準値 $b$ と残差 $r$ を確認 | 同時間帯系の基準値が強い |
 | 初期モデル | 2-Exp-2〜7 | 残差再構成と swap 正則化 | 潜在分離だけでは安定しない |
 | 合成データ(synthetic) | 2-Exp-8, 22 | 真の成分がある条件で検証 | 成分があれば回復できる |
-| 出力分解 | 2-Exp-11〜15 | Decoder 出力を成分に分ける | 出力分解のほうがよかった |
+| 4変数への分解 | 2-Exp-11〜15 | Decoder 出力を成分に分ける | 4変数への分解のほうがよかった |
 | target 感度 | 2-Exp-16〜19 | FreshRetailNet で基準値を比較 | `series_mean` 誤差が主成功例 |
 | 統計確認 | 2-Exp-20 | seed-level bootstrap | 改善が seed 依存ではない |
 | 可視化 | 2-Exp-21 | hour profile / heatmap | 時間成分の対応を図示できる |
@@ -493,7 +493,7 @@ synthetic では、真の成分 $g,a,c,u$ が分かっている。
 
 ここから言えるのは、提案手法が「必ずどんなデータでも分解できる」ということではない。
 
-言えるのは、残差に成分構造があり、平均ゼロ制約が妥当な条件では、出力分解によって成分を回復できるということである。
+言えるのは、残差に成分構造があり、平均ゼロ制約が妥当な条件では、4変数への分解によって成分を回復できるということである。
 
 ## 4.3 FreshRetailNet で言えること
 
@@ -519,7 +519,7 @@ FreshRetailNet では真の成分は分からない。
 | 2-Exp-25 | `same_hour_recent_mean_d7_block0/1/2_6k` | 改善幅は 0.0008〜0.0017 程度、hour corr は全て負 | 補正は小さく、成分解釈は弱い |
 | 2-Exp-26 | direct forecasting | `global/day/hour` は `global/local` より WAPE を 0.6233 から 0.6133 に小幅改善、interaction 付きは WAPE 0.6267 | 通常予測では day/hour 分割は導入できるが、interaction までの強い根拠は弱い |
 | 2-Exp-27 | `series_mean` residual latent split | `global/local` residual が corrected MAE 0.0593、day/hour は 0.0671、interaction 付きは 0.0614 | residual は学習可能だが、latent split だけでは不十分 |
-| 2-Exp-28 | latent split vs output decomposition | centered output decomposition が corrected MAE 0.0572、high residual top10 も 0.2656〜0.2681 へ改善 | 主提案を latent split ではなく output decomposition + centering に置く根拠 |
+| 2-Exp-28 | latent split vs 4変数への分解 | centering ありの4変数モデル が corrected MAE 0.0572、high residual top10 も 0.2656〜0.2681 へ改善 | 主提案を latent split ではなく 4変数への分解と centering に置く根拠 |
 
 ## 4.4 なぜ残差を主対象にするか
 
@@ -549,8 +549,8 @@ FreshRetailNet では真の成分は分からない。
 
 2-Exp-27 では、同じ `global/local` reference と day/hour split を `series_mean` residual に適用した。結果として、全モデルが baseline MAE 0.0721 を補正したが、最も良かったのは `global/local` residual で corrected MAE 0.0593 だった。day/hour は 0.0671、interaction 付きは 0.0614 であり、latent を細かく分けるだけでは `global/local` reference を上回らなかった。
 
-さらに 2-Exp-28 では、同じ `series_mean` residual 上で latent split 系と output decomposition 系を直接比較した。
-結果として、centered output decomposition は corrected MAE 0.0572 まで改善し、latent split 系の最良である `paper_global_local_residual` の 0.0609 を上回った。
+さらに 2-Exp-28 では、同じ `series_mean` residual 上で latent split 系と 4変数モデル系を直接比較した。
+結果として、centering ありの4変数モデルは corrected MAE 0.0572 まで改善し、latent split 系の最良である `paper_global_local_residual` の 0.0609 を上回った。
 高残差上位 10% でも、latent split 系は baseline 0.2923 に対して同等または悪化した一方、`output_decomp_centered_no_interaction` は 0.2681、`output_decomp_centered` は 0.2656 まで改善した。
 
 この結果から、次のように整理する。
@@ -559,7 +559,7 @@ FreshRetailNet では真の成分は分からない。
 残差には学習可能な構造が残っている。
 しかし、潜在表現を細分化するだけでは、成分の役割が decoder 内で混ざり、安定した改善にはつながらない。
 したがって、本研究の主張は latent split そのものではなく、
-残差出力を global/day/hour/interaction に分け、centering 制約で意味を固定する出力分解に置く。
+残差出力を global/day/hour/interaction に分け、centering 制約で意味を固定する4変数への分解に置く。
 ```
 
 ただし、2-Exp-28 でも実データの interaction 成分の寄与は小さかった。
@@ -574,11 +574,11 @@ FreshRetailNet では真の成分は分からない。
 2. `series_mean` を基準値にすると、残差に時間帯構造が残り、提案手法による補正と hour 成分の解釈が成立しやすい。
 3. `same_hour_recent_mean_d7` を基準値にすると、基準値が時間帯構造を吸収するため、残差の hour 成分は解釈しにくくなる。
 4. `series_mean` residual の改善は、系列数を増やしても、系列ブロックを変えても保たれた。
-5. synthetic では、真の成分がある条件で output decomposition が成分を回復できる。
+5. synthetic では、真の成分がある条件で 4変数への分解 が成分を回復できる。
 
 6. 通常予測では day/hour 分割の効果は小幅であり、interaction 成分は不安定である。
-7. residual target でも、latent split だけでは `global/local` reference を安定して上回らないため、出力分解と制約が必要である。
-8. 2-Exp-28 では、同じ `series_mean` residual 上で centered output decomposition が latent split 系より低い corrected MAE と良い high-residual correction を示した。
+7. residual target でも、latent split だけでは `global/local` reference を安定して上回らないため、4変数への分解と制約が必要である。
+8. 2-Exp-28 では、同じ `series_mean` residual 上で centering ありの4変数モデル が latent split 系より低い corrected MAE と良い high-residual correction を示した。
 
 ## 4.6 現時点で言えないこと
 
@@ -958,7 +958,7 @@ y_{i,d,h}
 | swap 正則化 | 2-Exp-7 | latent を入れ替えれば分離するか | 分離の改善は限定的 | latent 分離だけでは保証が弱い |
 | structured synthetic | 2-Exp-8 | 真の構造があれば学習できるか | synthetic では成立 | 構造がある条件では可能 |
 | FreshRetailNet subset | 2-Exp-9〜10 | 実データ subset で改善するか | subset 選びが難しい | target 設計が重要 |
-| output decomposition | 2-Exp-11〜15 | 出力を成分に分けるとよいか | synthetic で成分回復が改善 | latent ではなく出力分解へ |
+| 4変数への分解 | 2-Exp-11〜15 | 出力を成分に分けるとよいか | synthetic で成分回復が改善 | latent ではなく4変数への分解へ |
 | target sensitivity | 2-Exp-16〜19 | どの基準値なら残差構造が残るか | `series_mean` が主成功例 | 基準値選択が中心課題 |
 | 統計検証 | 2-Exp-20 | 改善が seed 依存でないか | paired bootstrap で改善を確認 | FreshRetailNet の主結果を補強 |
 | 可視化 | 2-Exp-21 | hour 成分が見えるか | `series_mean` は対応、same-hour は弱い | 成功例と限界例を図示 |
@@ -985,7 +985,7 @@ y_{i,d,h}
 1. 元論文は global / local を分ける研究である。
 2. 小売では local を日・時間帯・日×時間帯に分けたい。
 3. FreshRetailNet では強い基準値があり、売上全体ではなく残差を見る必要がある。
-4. 残差に時間帯構造が残る target では、出力分解が補正と解釈に効く。
+4. 残差に時間帯構造が残る target では、4変数への分解が補正と解釈に効く。
 5. 強い same-hour baseline 後の残差では、構造が薄くなり、解釈性は下がる。
 6. したがって、本研究は強い baseline を置き換えるのではなく、baseline 後の残差を説明可能に補正する研究である。
 
