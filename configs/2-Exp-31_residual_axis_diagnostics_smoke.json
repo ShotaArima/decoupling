@@ -1,7 +1,9 @@
 {
   "seed": 17,
   "sweep": {
-    "seeds": [17],
+    "seeds": [
+      17
+    ],
     "output_dir": "runs/2-Exp-31_residual_axis_diagnostics_smoke",
     "scenarios": [
       {
@@ -80,5 +82,8 @@
       "center_components": true,
       "use_interaction": true
     }
-  ]
+  ],
+  "probes": {
+    "enabled": false
+  }
 }

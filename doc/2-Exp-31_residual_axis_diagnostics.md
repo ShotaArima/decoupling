@@ -67,8 +67,19 @@ FreshRetailNet 本番サイズ(1500×28×24、500回×2軸)で variant あたり
 - ユニットテスト4条件+smoke を torch 版で再実行し、相対振幅は旧実装と完全一致、
   判定(棄却/非棄却)も同一であることを確認済み。
 
-なお、variant 間の残りの無音区間は latent probe(sklearn の LogisticRegression、
-数十秒程度)であり、支配的ではないため現状のままとする。
+### latent probe の無効化(2026-07-13 追加改修)
+
+permutation の GPU 化後も、probe 段階で数分の無音区間(CPU 400%超)が残った。
+原因は `run_latent_probes` の z_interaction probe で、6000系列では
+**約400万行 × 最大168クラス**の LogisticRegression(max_iter=1000)を
+複数回 fit していたため。対処:
+
+- `probes.enabled` フラグを追加(既定 true = 既存実験の挙動は不変)。
+- 有効時は `latent probes (sklearn, CPU)` の tqdm 段階バー(4 stage)を表示。
+- Exp-31 の config は両方 `"probes": {"enabled": false}` に設定。
+  本実験の目的は model-free の残差診断+hour corr であり、latent probe は不要。
+  (論文でも latent の解釈性は主張しない方針のため、この実験で probe を
+  落とすことに主張上の損失はない)
 
 ## ユニット検証(ローカル、2026-07-13)
 

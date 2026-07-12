@@ -920,7 +920,11 @@ def _probe_day_labels(grid: np.ndarray, config: dict[str, Any]) -> dict[str, np.
 
 
 def run_latent_probes(train_arrays: dict[str, np.ndarray], test_arrays: dict[str, np.ndarray], config: dict[str, Any]) -> dict[str, float]:
+    probe_cfg = config.get("probes", {})
+    if not bool(probe_cfg.get("enabled", True)):
+        return {}
     metrics: dict[str, float] = {}
+    progress = tqdm(total=4, desc="latent probes (sklearn, CPU)", unit="stage")
     train_labels = _probe_day_labels(train_arrays["grid"], config)
     test_labels = _probe_day_labels(test_arrays["grid"], config)
     if "z_global" in train_arrays and len(np.unique(train_arrays["subgroup"])) > 1:
@@ -935,6 +939,7 @@ def run_latent_probes(train_arrays: dict[str, np.ndarray], test_arrays: dict[str
             reg = Ridge(alpha=1.0)
             reg.fit(train_z, train_discount)
             metrics["leakage_z_global_discount_mae"] = float(np.mean(np.abs(reg.predict(test_z) - test_discount)))
+    progress.update(1)
     if "z_day" in train_arrays:
         train_z = train_arrays["z_day"].reshape(-1, train_arrays["z_day"].shape[-1])
         test_z = test_arrays["z_day"].reshape(-1, test_arrays["z_day"].shape[-1])
@@ -956,6 +961,7 @@ def run_latent_probes(train_arrays: dict[str, np.ndarray], test_arrays: dict[str
             clf = LogisticRegression(max_iter=1000, class_weight="balanced")
             clf.fit(train_z, train_subgroup)
             metrics["leakage_z_day_subgroup_accuracy"] = float(accuracy_score(test_subgroup, clf.predict(test_z)))
+    progress.update(1)
     if "z_hour" in train_arrays:
         train_z = train_arrays["z_hour"].reshape(-1, train_arrays["z_hour"].shape[-1])
         test_z = test_arrays["z_hour"].reshape(-1, test_arrays["z_hour"].shape[-1])
@@ -970,6 +976,7 @@ def run_latent_probes(train_arrays: dict[str, np.ndarray], test_arrays: dict[str
             clf = LogisticRegression(max_iter=1000, class_weight="balanced")
             clf.fit(train_z, train_subgroup)
             metrics["leakage_z_hour_subgroup_accuracy"] = float(accuracy_score(test_subgroup, clf.predict(test_z)))
+    progress.update(1)
     if "z_interaction" in train_arrays:
         train_z = train_arrays["z_interaction"].reshape(-1, train_arrays["z_interaction"].shape[-1])
         test_z = test_arrays["z_interaction"].reshape(-1, test_arrays["z_interaction"].shape[-1])
@@ -990,6 +997,8 @@ def run_latent_probes(train_arrays: dict[str, np.ndarray], test_arrays: dict[str
             clf = LogisticRegression(max_iter=1000, class_weight="balanced")
             clf.fit(train_z, train_bucket)
             metrics["probe_z_interaction_weekday_hour_accuracy"] = float(accuracy_score(test_bucket, clf.predict(test_z)))
+    progress.update(1)
+    progress.close()
     return metrics
 
 

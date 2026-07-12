@@ -1,7 +1,9 @@
 {
   "seed": 17,
   "sweep": {
-    "seeds": [17],
+    "seeds": [
+      17
+    ],
     "output_dir": "runs/2-Exp-31_residual_axis_diagnostics_freshretailnet",
     "scenarios": [
       {
@@ -37,7 +39,10 @@
     "data_dir": "data/freshretailnet",
     "train_split": "train",
     "eval_split": "eval",
-    "sample_id_columns": ["store_id", "product_id"],
+    "sample_id_columns": [
+      "store_id",
+      "product_id"
+    ],
     "static_id_columns": [
       "city_id",
       "store_id",
@@ -134,5 +139,8 @@
       "center_components": true,
       "use_interaction": true
     }
-  ]
+  ],
+  "probes": {
+    "enabled": false
+  }
 }
