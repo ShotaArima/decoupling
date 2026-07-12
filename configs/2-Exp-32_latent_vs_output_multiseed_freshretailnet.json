@@ -1,0 +1,162 @@
+{
+  "seed": 17,
+  "sweep": {
+    "seeds": [17, 23, 31, 47, 59],
+    "output_dir": "runs/2-Exp-32_latent_vs_output_multiseed_freshretailnet",
+    "scenarios": [
+      {
+        "name": "series_mean",
+        "overrides": {}
+      }
+    ]
+  },
+  "dataset": {
+    "name": "freshretailnet",
+    "hf_name": "Dingdong-Inc/FreshRetailNet-50K",
+    "data_dir": "data/freshretailnet",
+    "train_split": "train",
+    "eval_split": "eval",
+    "validation_source": "train_holdout",
+    "validation_series_start_offset": 2000,
+    "sample_id_columns": ["store_id", "product_id"],
+    "static_id_columns": [
+      "city_id",
+      "store_id",
+      "management_group_id",
+      "first_category_id",
+      "second_category_id",
+      "third_category_id",
+      "product_id"
+    ],
+    "daily_numeric_columns": [
+      "discount",
+      "holiday_flag",
+      "activity_flag",
+      "precpt",
+      "avg_temperature",
+      "avg_humidity",
+      "avg_wind_level"
+    ],
+    "hourly_sales_column": "hours_sale",
+    "hourly_stock_column": "hours_stock_status",
+    "stockout_value": 1,
+    "history_days": 28,
+    "forecast_days": 2,
+    "recent_days": 7,
+    "window_size": 24,
+    "cache_dir": "data/freshretailnet/cache",
+    "use_cache": true,
+    "max_train_series": 2000,
+    "max_valid_series": 500,
+    "max_eval_series": 500,
+    "subset_filter": {
+      "enabled": false,
+      "batch_size": 512,
+      "structure_validation_fraction": 0.35,
+      "min_effect_count": 4
+    }
+  },
+  "model": {
+    "hidden_dim": 128,
+    "global_dim": 8,
+    "local_dim": 8,
+    "day_dim": 8,
+    "hour_dim": 8,
+    "interaction_dim": 6,
+    "dropout": 0.1
+  },
+  "loss": {
+    "decouple_weight": 0.01,
+    "component_constraint_weight": 0.0,
+    "residual_bias_weight": 0.0,
+    "series_residual_bias_weight": 0.0
+  },
+  "residual": {
+    "baseline_method": "series_mean",
+    "target": "baseline_residual"
+  },
+  "diagnostics": {
+    "n_permutations": 0
+  },
+  "calibration": {
+    "enabled": false
+  },
+  "swap_regularization": {
+    "enabled": false,
+    "weight": 0.05
+  },
+  "probes": {
+    "enabled": false
+  },
+  "output": {
+    "save_latent_arrays": false,
+    "save_residual_predictions": false,
+    "save_checkpoints": false,
+    "save_hour_heatmap": false,
+    "save_visualization_tables": true,
+    "visualization_top_k": 3
+  },
+  "train": {
+    "batch_size": 128,
+    "epochs": 12,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "num_workers": 2,
+    "persistent_workers": true,
+    "prefetch_factor": 2,
+    "pin_memory": true,
+    "amp": true,
+    "reset_seed_per_variant": true,
+    "selection_metric": "valid_loss_residual_reconstruction",
+    "device": "cuda",
+    "output_dir": "runs/2-Exp-32_latent_vs_output_multiseed_freshretailnet/base"
+  },
+  "experiments": [
+    {
+      "name": "paper_global_local_residual",
+      "type": "multigrain_ae",
+      "use_global": true,
+      "use_local": true,
+      "use_day": false,
+      "use_hour": false,
+      "use_interaction": false
+    },
+    {
+      "name": "four_factor_global_day_hour_residual",
+      "type": "multigrain_ae",
+      "use_global": true,
+      "use_local": false,
+      "use_day": true,
+      "use_hour": true,
+      "use_interaction": false
+    },
+    {
+      "name": "four_factor_global_day_hour_interaction_residual",
+      "type": "multigrain_ae",
+      "use_global": true,
+      "use_local": false,
+      "use_day": true,
+      "use_hour": true,
+      "use_interaction": true
+    },
+    {
+      "name": "output_decomp_no_center",
+      "type": "output_decomposition",
+      "center_components": false,
+      "use_interaction": true
+    },
+    {
+      "name": "output_decomp_centered_no_interaction",
+      "type": "output_decomposition",
+      "center_components": true,
+      "use_interaction": false
+    },
+    {
+      "name": "output_decomp_centered",
+      "type": "output_decomposition",
+      "center_components": true,
+      "use_interaction": true
+    }
+  ]
+}

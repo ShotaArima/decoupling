@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any
 
 import numpy as np
@@ -8,6 +9,9 @@ import torch
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 
 from .data import FreshRetailNetSeries, infer_input_dim
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -658,9 +662,50 @@ def build_retail_data(config: dict[str, Any]) -> RetailDataBundle:
         merged = dict(data_cfg)
         merged["series_days"] = int(data_cfg["history_days"]) + int(data_cfg["forecast_days"])
         merged["forecast_windows"] = int(data_cfg["forecast_days"])
-        train = FreshRetailNetSeries.from_config(merged, merged["train_split"], max_series=merged["max_train_series"])
-        valid = FreshRetailNetSeries.from_config(merged, merged["eval_split"], max_series=merged["max_eval_series"])
-        test = valid
+        train_split = str(merged["train_split"])
+        eval_split = str(merged["eval_split"])
+        max_train_series = int(merged["max_train_series"])
+        max_eval_series = int(merged["max_eval_series"])
+
+        validation_source = str(merged.get("validation_source", "eval"))
+        if validation_source == "train_holdout":
+            max_valid_series = int(merged.get("max_valid_series", max_eval_series))
+            train_offset = int(merged.get("series_start_offset", 0))
+            valid_offset = int(merged.get("validation_series_start_offset", train_offset + max_train_series))
+            train_end = train_offset + max_train_series
+            valid_end = valid_offset + max_valid_series
+            if max_valid_series <= 0:
+                raise ValueError("max_valid_series must be positive for validation_source=train_holdout")
+            if max(train_offset, valid_offset) < min(train_end, valid_end):
+                raise ValueError("FreshRetailNet train and validation series ranges overlap")
+            pool_offset = min(train_offset, valid_offset)
+            pool_end = max(train_end, valid_end)
+            pool_config = dict(merged)
+            pool_config["series_start_offset"] = pool_offset
+            train_pool = FreshRetailNetSeries.from_config(pool_config, train_split, max_series=pool_end - pool_offset)
+            if len(train_pool) < pool_end - pool_offset:
+                raise RuntimeError("FreshRetailNet train split does not contain enough series for the requested train/validation ranges")
+            train = Subset(train_pool, range(train_offset - pool_offset, train_end - pool_offset))
+            valid = Subset(train_pool, range(valid_offset - pool_offset, valid_end - pool_offset))
+            test = FreshRetailNetSeries.from_config(merged, eval_split, max_series=max_eval_series)
+            LOGGER.info(
+                "FreshRetailNet split: train=%s[%d:%d] valid=%s[%d:%d] test=%s[:%d]",
+                train_split,
+                train_offset,
+                train_end,
+                train_split,
+                valid_offset,
+                valid_end,
+                eval_split,
+                max_eval_series,
+            )
+        elif validation_source == "eval":
+            train = FreshRetailNetSeries.from_config(merged, train_split, max_series=max_train_series)
+            valid = FreshRetailNetSeries.from_config(merged, eval_split, max_series=max_eval_series)
+            test = valid
+            LOGGER.warning("FreshRetailNet validation and test both use split=%s", eval_split)
+        else:
+            raise ValueError(f"unknown FreshRetailNet validation_source: {validation_source}")
         return _maybe_filter_bundle(RetailDataBundle(
             train=train,
             valid=valid,
