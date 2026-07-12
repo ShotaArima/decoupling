@@ -725,7 +725,9 @@ def _masked_axis_profile(values: np.ndarray, observed: np.ndarray, keep_axis: in
     return np.sum(values * observed, axis=reduce_axes) / denom
 
 
-def residual_axis_diagnostics(arrays: dict[str, np.ndarray], config: dict[str, Any]) -> dict[str, float]:
+def residual_axis_diagnostics(
+    arrays: dict[str, np.ndarray], config: dict[str, Any], device: torch.device | None = None
+) -> dict[str, float]:
     """Model-free diagnostics for residual structure along the day / hour axes.
 
     For each axis, reports the amplitude of the mean residual profile
@@ -738,9 +740,14 @@ def residual_axis_diagnostics(arrays: dict[str, np.ndarray], config: dict[str, A
     keeping the observation pattern and everything else fixed. This makes
     "structure remains along axis k" a testable statement: interpret the
     corresponding component (and its corr) only when the test rejects.
+
+    Permutations run chunked on ``device`` (GPU when available). The random
+    orders are generated on CPU with a seeded generator, so the null
+    distribution is deterministic and identical across devices.
     """
     diag_cfg = config.get("diagnostics", {})
     n_permutations = int(diag_cfg.get("n_permutations", 0))
+    chunk_size = max(1, int(diag_cfg.get("permutation_chunk", 16)))
     residual = arrays["residual"]
     observed = (arrays["observed"] > 0).astype(np.float64)
     keep = observed > 0
@@ -748,7 +755,11 @@ def residual_axis_diagnostics(arrays: dict[str, np.ndarray], config: dict[str, A
         return {}
     abs_mean = float(np.mean(np.abs(residual[keep])))
     metrics: dict[str, float] = {"diag_residual_abs_mean": abs_mean}
-    rng = np.random.default_rng(int(config.get("seed", 0)))
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    residual_t = torch.from_numpy(np.ascontiguousarray(residual)).to(device=device, dtype=torch.float32)
+    observed_t = torch.from_numpy(np.ascontiguousarray(observed)).to(device=device, dtype=torch.float32)
+    generator = torch.Generator().manual_seed(int(config.get("seed", 0)))
     for axis_name, axis in (("day", 1), ("hour", 2)):
         profile = _masked_axis_profile(residual, observed, keep_axis=axis)
         amplitude = float(np.std(profile))
@@ -756,13 +767,25 @@ def residual_axis_diagnostics(arrays: dict[str, np.ndarray], config: dict[str, A
         metrics[f"diag_{axis_name}_relative_amplitude"] = amplitude / max(abs_mean, 1e-12)
         if n_permutations <= 0:
             continue
-        null_amplitudes = np.empty(n_permutations)
-        for b in range(n_permutations):
-            order = np.argsort(rng.random(residual.shape), axis=axis)
-            residual_perm = np.take_along_axis(residual, order, axis=axis)
-            observed_perm = np.take_along_axis(observed, order, axis=axis)
-            null_profile = _masked_axis_profile(residual_perm, observed_perm, keep_axis=axis)
-            null_amplitudes[b] = np.std(null_profile)
+        reduce_dims = tuple(dim for dim in (1, 2, 3) if dim != axis + 1)
+        null_chunks: list[torch.Tensor] = []
+        progress = tqdm(total=n_permutations, desc=f"diagnostics {axis_name} permutations", unit="perm")
+        done = 0
+        while done < n_permutations:
+            batch = min(chunk_size, n_permutations - done)
+            noise = torch.rand((batch, *residual.shape), generator=generator).to(device)
+            order = torch.argsort(noise, dim=axis + 1)
+            del noise
+            residual_perm = torch.take_along_dim(residual_t.unsqueeze(0), order, dim=axis + 1)
+            observed_perm = torch.take_along_dim(observed_t.unsqueeze(0), order, dim=axis + 1)
+            del order
+            denom = torch.clamp(observed_perm.sum(dim=reduce_dims), min=1.0)
+            null_profiles = (residual_perm * observed_perm).sum(dim=reduce_dims) / denom
+            null_chunks.append(torch.std(null_profiles, dim=1, unbiased=False).cpu())
+            done += batch
+            progress.update(batch)
+        progress.close()
+        null_amplitudes = torch.cat(null_chunks).numpy().astype(np.float64)
         p_value = float((np.sum(null_amplitudes >= amplitude) + 1.0) / (n_permutations + 1.0))
         metrics[f"diag_{axis_name}_permutation_pvalue"] = p_value
         metrics[f"diag_{axis_name}_null_amplitude_p95"] = float(np.quantile(null_amplitudes, 0.95))
@@ -1194,7 +1217,7 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     metrics.update(component_ablation_metrics(test_arrays))
     metrics.update(hour_profile_metrics(test_arrays))
     metrics.update(future_holdout_metrics(test_arrays))
-    metrics.update(residual_axis_diagnostics(test_arrays, variant_config))
+    metrics.update(residual_axis_diagnostics(test_arrays, variant_config, device=device))
     metrics.update(calibrated_residual_metrics(valid_arrays, test_arrays, variant_config.get("calibration", {})))
     metrics.update(run_latent_probes(train_arrays, test_arrays, variant_config))
     metrics.update(evaluate_ablation_metrics(model, test_loader, variant_config, device))

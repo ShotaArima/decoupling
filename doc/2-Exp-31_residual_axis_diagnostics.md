@@ -51,6 +51,25 @@
 - 診断は test 配列(eval 系列の残差と観測マスク)に対して行うため、
   同一 scenario 内の variant 間では同じ値になる(モデル非依存)。
 
+### GPU 対応と進捗表示(2026-07-13 改修)
+
+初版の numpy 実装は permutation ループがシングルスレッド CPU で、
+FreshRetailNet 本番サイズ(1500×28×24、500回×2軸)で variant あたり約3.5分の
+無音区間が発生していた。次の通り改修した。
+
+- permutation の並べ替え(argsort / take_along_dim)と profile 計算を torch 化し、
+  学習と同じ device(CUDA があれば GPU)でチャンク実行する。
+  チャンクサイズは `diagnostics.permutation_chunk`(既定 16)。
+- 乱数は CPU 側の seed 付き generator で生成してから device へ送るため、
+  **帰無分布は device に依らず決定論的**(CPU/GPU で同一の p 値)。
+- tqdm で `diagnostics {axis} permutations` の進捗バーを表示(残り時間 ETA 付き)。
+- 計測: 本番サイズで CPU 47秒(旧 約3.5分)、GPU では数秒の見込み。
+- ユニットテスト4条件+smoke を torch 版で再実行し、相対振幅は旧実装と完全一致、
+  判定(棄却/非棄却)も同一であることを確認済み。
+
+なお、variant 間の残りの無音区間は latent probe(sklearn の LogisticRegression、
+数十秒程度)であり、支配的ではないため現状のままとする。
+
 ## ユニット検証(ローカル、2026-07-13)
 
 | 条件 | hour p | day p | 判定 |
