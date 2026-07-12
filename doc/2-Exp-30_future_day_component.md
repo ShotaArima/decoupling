@@ -1,0 +1,133 @@
+# 2-Exp-30: 未来日に対する成分出力の評価
+
+## 背景
+
+外部レビュー(2026-07-12)で、論文の最大の論理ギャップとして次が指摘された。
+
+```text
+「平均による分解は事後的であり、未来の日には直接適用できない。
+そこで NN で各成分を予測する」と述べているが、
+未来の日の成分をどう作るのか、定式化も実験も追いついていない。
+日成分は予測不能なショックか、曜日・販促などの観測可能な特徴で
+説明できる部分か、どちらを狙っているのか。
+```
+
+紙面上は (a)〜(d) の修正で「本研究の検証範囲は窓内推定と系列方向汎化」と
+正直に限定した(paper リポジトリ review_notes 参照)。
+2-Exp-30 は、この限定を一歩進めて「**事前に分かる特徴だけから未来日の成分を
+出せるか**」を実験で直接検証する。
+
+## 目的
+
+観測窓の最後 $k=2$ 日を「未来日」とみなし、その日の売上情報を入力から隠した状態で、
+
+1. 日成分・相互作用成分が、日単位特徴(曜日・休日・値引き・天気)と窓の文脈から構成できるか
+2. 未来日セルに対する補正(baseline + r̂)が、文脈のみから計算した基準値を上回るか
+
+を評価する。これは「日成分 = 観測可能な特徴で説明できる日効果」という
+論文の位置づけの実験的裏づけになる(論証マップの R3 介入応答にも接続)。
+
+## 設計
+
+### 入力マスク
+
+- config の `residual.future_mask_days = k` で窓の最後 $k$ 日を未来日に指定する。
+- 未来日のセルについて、`residual.future_mask_channels`(既定 `[0, 1]` =
+  売上/残差チャネルと欠品・在庫チャネル)の **x とマスクの両方をゼロ化**する。
+  日単位特徴(値引き・休日・天気)と時刻・曜日特徴は残す。
+- 中心化は従来どおり窓全体($D$ 日)で課す。モデルは全日分の成分を出力する。
+
+### リーク防止(重要)
+
+- 基準値は**文脈日(最初の $D-k$ 日)の観測セルのみ**から計算する
+  (`series_mean` は文脈平均になる。`same_hour_recent_mean` の rolling window も
+  未来日を除外することをユニットテストで確認済み)。
+- 残差 $r = y - b$ はこの文脈基準値に対して全日で定義し、損失は真の観測マスク上で
+  全日を監督する(未来日は特徴のみから当てる訓練になる)。
+- synthetic(`noisy_true_residual` target)では残差は生成的に定義されるため
+  基準値のリークは問題にならない。入力マスクのみが効く。
+
+### 評価指標(新設 `future_holdout_metrics`)
+
+| 指標 | 意味 |
+|---|---|
+| `future_baseline_cell_mae` / `future_corrected_cell_mae` | 未来日セルでの基準値のみ vs 補正後 |
+| `context_*` | 同じ指標の文脈日版(参照) |
+| `future_residual_hour_profile_corr` / `future_hour_component_residual_profile_corr` | 未来日セルでの時間帯 profile 対応 |
+| `future_component_day_corr` / `future_component_interaction_corr` | (synthetic)未来日の推定成分と真の成分の相関 |
+
+## 成功条件
+
+強い結果:
+
+- synthetic: `future_component_day_corr` が高い(真の day 効果は曜日・値引き・休日の
+  関数なので、特徴から復元できるはず)。interaction も同様(値引き×13時 promo)。
+- `future_corrected_cell_mae < future_baseline_cell_mae`(未来日でも補正が効く)。
+
+この場合、論文の limitation(未来日外挿は未検証)を1段落+小表で
+「特徴から構成できる範囲では外挿も成立する」に格上げできる。
+
+弱い結果:
+
+- 未来日の補正が baseline と同等以下 → 「窓内推定と系列方向汎化」の限定を維持し、
+  本実験は appendix / 修論行き。day 成分のうち特徴で説明できない部分
+  (予測不能ショック)が支配的である、という知見として整理する。
+
+## 実装
+
+- `src/decoupled_ts/residual_experiments.py`
+  - `residual_batch`: `future_mask_days` / `future_mask_channels` 対応。
+    基準値計算を `baseline_observed`(文脈のみ)に変更。入力 x/mask の未来日
+    ゼロ化。`future_cells` を返す。損失・評価用の `observed` は真のマスクのまま。
+  - `predict_residuals`: `future_cells` を配列として収集。
+  - `future_holdout_metrics`: 上記指標を計算。`run_variant` から呼び出し。
+- 既存実験への影響: `future_mask_days` 未指定(=0)なら従来と完全に同一経路。
+
+## 実行コマンド
+
+smoke(ローカル実行済み・完走確認済み):
+
+```bash
+uv run decoupled-ts residual-sweep --config configs/2-Exp-30_future_day_component_smoke.json
+```
+
+synthetic 本番(3 seed。リモート `ssh my` で実行):
+
+```bash
+uv run decoupled-ts residual-sweep --config configs/2-Exp-30_future_day_component_synthetic.json
+```
+
+FreshRetailNet(seed 13、Exp-28 と同一規模 2000/500 系列):
+
+```bash
+uv run decoupled-ts residual-experiment --config configs/2-Exp-30_future_day_component_freshretailnet.json
+```
+
+## 出力
+
+```text
+runs/2-Exp-30_future_day_component_synthetic/base/seed_{17,23,31}/{variant}/metrics.json
+runs/2-Exp-30_future_day_component_freshretailnet/{variant}/metrics.json
+```
+
+variant: `paper_global_local_residual`(参照) /
+`output_decomp_centered_no_interaction` / `output_decomp_centered`
+
+見るべきキー: `future_*` と `context_*`(metrics.json 内)。
+
+## ユニット検証(ローカル、2026-07-12)
+
+- future_cells の位置・形状が正しい
+- 未来日の ch0/ch1 の x とマスクが両方ゼロ化され、特徴チャネルは無傷
+- `series_mean` 基準値が文脈日のみの平均と一致(リークなし)
+- `same_hour_recent_mean` の rolling window が未来日を除外
+- 損失・評価用 `observed` は真の観測マスクのまま
+- `future_mask_days` 未指定時は従来挙動と同一(future キーなし)
+- smoke 完走: future/context 指標が metrics.json に出力される
+  (1 epoch でも `future_component_day_corr = 0.43`)
+
+## 論文での使い方
+
+結果が強ければ: 5章に1段落+小表(future MAE 対比、future day corr)を追加し、
+6章の限界第4項を「特徴から構成できる範囲では未来日にも成分を出力できる」に更新。
+結果が弱ければ: 本文は現状の限定を維持し、修論・中間発表の材料にする。
