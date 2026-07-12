@@ -719,6 +719,59 @@ def future_holdout_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
     return metrics
 
 
+def _masked_axis_profile(values: np.ndarray, observed: np.ndarray, keep_axis: int) -> np.ndarray:
+    reduce_axes = tuple(axis for axis in (0, 1, 2) if axis != keep_axis)
+    denom = np.clip(np.sum(observed, axis=reduce_axes), 1.0, None)
+    return np.sum(values * observed, axis=reduce_axes) / denom
+
+
+def residual_axis_diagnostics(arrays: dict[str, np.ndarray], config: dict[str, Any]) -> dict[str, float]:
+    """Model-free diagnostics for residual structure along the day / hour axes.
+
+    For each axis, reports the amplitude of the mean residual profile
+    (std over bins), the amplitude relative to the mean absolute residual,
+    and, when ``diagnostics.n_permutations > 0``, a permutation p-value.
+
+    The permutation null shuffles (residual, observed) cell pairs along the
+    tested axis within each row (hour axis: within each series-day; day axis:
+    within each series-hour), which removes structure on that axis while
+    keeping the observation pattern and everything else fixed. This makes
+    "structure remains along axis k" a testable statement: interpret the
+    corresponding component (and its corr) only when the test rejects.
+    """
+    diag_cfg = config.get("diagnostics", {})
+    n_permutations = int(diag_cfg.get("n_permutations", 0))
+    residual = arrays["residual"]
+    observed = (arrays["observed"] > 0).astype(np.float64)
+    keep = observed > 0
+    if not keep.any():
+        return {}
+    abs_mean = float(np.mean(np.abs(residual[keep])))
+    metrics: dict[str, float] = {"diag_residual_abs_mean": abs_mean}
+    rng = np.random.default_rng(int(config.get("seed", 0)))
+    for axis_name, axis in (("day", 1), ("hour", 2)):
+        profile = _masked_axis_profile(residual, observed, keep_axis=axis)
+        amplitude = float(np.std(profile))
+        metrics[f"diag_{axis_name}_profile_std"] = amplitude
+        metrics[f"diag_{axis_name}_relative_amplitude"] = amplitude / max(abs_mean, 1e-12)
+        if n_permutations <= 0:
+            continue
+        null_amplitudes = np.empty(n_permutations)
+        for b in range(n_permutations):
+            order = np.argsort(rng.random(residual.shape), axis=axis)
+            residual_perm = np.take_along_axis(residual, order, axis=axis)
+            observed_perm = np.take_along_axis(observed, order, axis=axis)
+            null_profile = _masked_axis_profile(residual_perm, observed_perm, keep_axis=axis)
+            null_amplitudes[b] = np.std(null_profile)
+        p_value = float((np.sum(null_amplitudes >= amplitude) + 1.0) / (n_permutations + 1.0))
+        metrics[f"diag_{axis_name}_permutation_pvalue"] = p_value
+        metrics[f"diag_{axis_name}_null_amplitude_p95"] = float(np.quantile(null_amplitudes, 0.95))
+        metrics[f"diag_{axis_name}_null_relative_amplitude_p95"] = float(
+            np.quantile(null_amplitudes, 0.95) / max(abs_mean, 1e-12)
+        )
+    return metrics
+
+
 @torch.no_grad()
 def evaluate_ablation_metrics(model: nn.Module, loader: DataLoader, config: dict[str, Any], device: torch.device) -> dict[str, float]:
     if not isinstance(model, ResidualMultiGrainAE):
@@ -1141,6 +1194,7 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     metrics.update(component_ablation_metrics(test_arrays))
     metrics.update(hour_profile_metrics(test_arrays))
     metrics.update(future_holdout_metrics(test_arrays))
+    metrics.update(residual_axis_diagnostics(test_arrays, variant_config))
     metrics.update(calibrated_residual_metrics(valid_arrays, test_arrays, variant_config.get("calibration", {})))
     metrics.update(run_latent_probes(train_arrays, test_arrays, variant_config))
     metrics.update(evaluate_ablation_metrics(model, test_loader, variant_config, device))
