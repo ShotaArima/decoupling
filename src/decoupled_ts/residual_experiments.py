@@ -71,29 +71,37 @@ def residual_batch(batch: dict[str, torch.Tensor], config: dict[str, Any]) -> di
     mask_grid = flatten_to_grid(batch["mask"])
     sales = grid[..., 0]
     observed = mask_grid[..., 0]
-    method = str(config.get("residual", {}).get("baseline_method", "same_hour_recent_mean"))
-    target = str(config.get("residual", {}).get("target", "baseline_residual"))
+    residual_cfg = config.get("residual", {})
+    method = str(residual_cfg.get("baseline_method", "same_hour_recent_mean"))
+    target = str(residual_cfg.get("target", "baseline_residual"))
+    future_days = int(residual_cfg.get("future_mask_days", 0))
+    future_cells: torch.Tensor | None = None
+    baseline_observed = observed
+    if future_days > 0:
+        future_cells = torch.zeros_like(observed)
+        future_cells[:, -future_days:, :] = 1.0
+        baseline_observed = observed * (1.0 - future_cells)
     if target in {"true_residual", "noisy_true_residual"} and target in batch:
         residual = batch[target].to(sales.device)
         baseline = sales - residual
         extra: dict[str, torch.Tensor] = {}
     elif method == "series_mean":
-        baseline = _series_mean_torch(sales, observed)
+        baseline = _series_mean_torch(sales, baseline_observed)
         residual = sales - baseline
         extra = {}
     elif method == "weekday_same_hour_mean":
-        baseline = _weekday_same_hour_mean_torch(sales, observed)
+        baseline = _weekday_same_hour_mean_torch(sales, baseline_observed)
         residual = sales - baseline
         extra = {}
     elif method == "same_hour_recent_mean":
-        recent_days = int(config.get("residual", {}).get("recent_days", config["dataset"].get("recent_days", 7)))
-        baseline = _same_hour_recent_mean_torch(sales, observed, recent_days)
+        recent_days = int(residual_cfg.get("recent_days", config["dataset"].get("recent_days", 7)))
+        baseline = _same_hour_recent_mean_torch(sales, baseline_observed, recent_days)
         residual = sales - baseline
         extra = {}
     elif method == "log1p_same_hour_recent_mean":
-        recent_days = int(config.get("residual", {}).get("recent_days", config["dataset"].get("recent_days", 7)))
+        recent_days = int(residual_cfg.get("recent_days", config["dataset"].get("recent_days", 7)))
         log_sales = torch.log1p(torch.clamp_min(sales, 0.0))
-        baseline_log = _same_hour_recent_mean_torch(log_sales, observed, recent_days)
+        baseline_log = _same_hour_recent_mean_torch(log_sales, baseline_observed, recent_days)
         baseline = torch.expm1(baseline_log).clamp_min(0.0)
         residual = log_sales - baseline_log
         extra = {"baseline_log": baseline_log}
@@ -104,14 +112,25 @@ def residual_batch(batch: dict[str, torch.Tensor], config: dict[str, Any]) -> di
         )
     x_residual = batch["x"].clone()
     x_residual[:, 0, :] = residual.reshape(residual.shape[0], -1)
+    input_mask = batch["mask"]
+    if future_cells is not None:
+        input_mask = batch["mask"].clone()
+        flat_future = future_cells.reshape(future_cells.shape[0], -1)
+        for channel in residual_cfg.get("future_mask_channels", [0, 1]):
+            channel = int(channel)
+            if channel < x_residual.shape[1]:
+                x_residual[:, channel, :] = x_residual[:, channel, :] * (1.0 - flat_future)
+                input_mask[:, channel, :] = input_mask[:, channel, :] * (1.0 - flat_future)
     result = {
         "x": x_residual,
-        "mask": batch["mask"],
+        "mask": input_mask,
         "sales": sales,
         "observed": observed,
         "baseline": baseline,
         "residual": residual,
     }
+    if future_cells is not None:
+        result["future_cells"] = future_cells
     result.update(extra)
     return result
 
@@ -282,7 +301,7 @@ def run_epoch(model: nn.Module, loader: DataLoader, config: dict[str, Any], devi
 @torch.no_grad()
 def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, Any], device: torch.device) -> dict[str, np.ndarray]:
     model.eval()
-    parts = {"sales": [], "baseline": [], "baseline_log": [], "residual": [], "residual_hat": [], "observed": [], "grid": [], "subgroup": []}
+    parts = {"sales": [], "baseline": [], "baseline_log": [], "residual": [], "residual_hat": [], "observed": [], "future_cells": [], "grid": [], "subgroup": []}
     latents: dict[str, list[np.ndarray]] = {"z_global": [], "z_local": [], "z_day": [], "z_hour": [], "z_interaction": []}
     components: dict[str, list[np.ndarray]] = {
         "global_component": [],
@@ -304,6 +323,8 @@ def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, An
             parts[key].append(rb[key].detach().cpu().numpy())
         if "baseline_log" in rb:
             parts["baseline_log"].append(rb["baseline_log"].detach().cpu().numpy())
+        if "future_cells" in rb:
+            parts["future_cells"].append(rb["future_cells"].detach().cpu().numpy())
         parts["residual_hat"].append(out["residual_hat"].detach().cpu().numpy())
         parts["grid"].append(flatten_to_grid(batch["x"]).numpy())
         parts["subgroup"].append(batch["subgroup"].numpy())
@@ -648,6 +669,53 @@ def hour_profile_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
         metrics["hour_component_profile_mean_abs"] = float(np.mean(np.abs(component_profile)))
     if keep.any() and "hour_component" in arrays:
         metrics["hour_component_cell_abs_mean"] = float(np.mean(np.abs(arrays["hour_component"][keep])))
+    return metrics
+
+
+def future_holdout_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
+    """Metrics restricted to the masked future days (2-Exp-30 future-day evaluation).
+
+    Requires `future_cells` produced by ``residual_batch`` when
+    ``residual.future_mask_days > 0``. The sales/stock channels of the future
+    days are hidden from the model input, so these metrics measure how well the
+    components are constructed from day-level features and window context alone.
+    """
+    if "future_cells" not in arrays:
+        return {}
+    future = arrays["future_cells"] > 0
+    observed = arrays["observed"] > 0
+    metrics: dict[str, float] = {}
+    for prefix, region in (("future", future & observed), ("context", (~future) & observed)):
+        if not region.any():
+            continue
+        sales = arrays["sales"][region]
+        baseline = arrays["baseline"][region]
+        residual = arrays["residual"][region]
+        pred = arrays["residual_hat"][region]
+        corrected = baseline + pred
+        metrics[f"{prefix}_baseline_cell_mae"] = float(np.mean(np.abs(baseline - sales)))
+        metrics[f"{prefix}_corrected_cell_mae"] = float(np.mean(np.abs(corrected - sales)))
+        metrics[f"{prefix}_corrected_cell_bias"] = float(np.mean(corrected - sales))
+        metrics[f"{prefix}_residual_mae"] = float(np.mean(np.abs(pred - residual)))
+    region = future & observed
+    if region.any():
+        weights = region.astype(np.float64)
+        denom = np.clip(weights.sum(axis=(0, 1)), 1.0, None)
+        residual_profile = (arrays["residual"] * weights).sum(axis=(0, 1)) / denom
+        pred_profile = (arrays["residual_hat"] * weights).sum(axis=(0, 1)) / denom
+        metrics["future_residual_hour_profile_corr"] = _corr(residual_profile, pred_profile)
+        if "hour_component" in arrays:
+            component_profile = (arrays["hour_component"] * weights).sum(axis=(0, 1)) / denom
+            metrics["future_hour_component_residual_profile_corr"] = _corr(residual_profile, component_profile)
+        for true_key, pred_key, name in (
+            ("true_day", "day_component", "day"),
+            ("true_interaction", "interaction_component", "interaction"),
+        ):
+            if true_key in arrays and pred_key in arrays:
+                metrics[f"future_component_{name}_corr"] = _corr(arrays[true_key][region], arrays[pred_key][region])
+                metrics[f"future_component_{name}_mae"] = float(
+                    np.mean(np.abs(arrays[pred_key][region] - arrays[true_key][region]))
+                )
     return metrics
 
 
@@ -1072,6 +1140,7 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
     metrics.update(component_recovery_metrics(test_arrays))
     metrics.update(component_ablation_metrics(test_arrays))
     metrics.update(hour_profile_metrics(test_arrays))
+    metrics.update(future_holdout_metrics(test_arrays))
     metrics.update(calibrated_residual_metrics(valid_arrays, test_arrays, variant_config.get("calibration", {})))
     metrics.update(run_latent_probes(train_arrays, test_arrays, variant_config))
     metrics.update(evaluate_ablation_metrics(model, test_loader, variant_config, device))
