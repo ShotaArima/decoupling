@@ -19,7 +19,7 @@ from .residual_diagnostics import _labels_from_grid
 from .residual_models import OutputDecompositionResidualModel, ResidualFlattenAE, ResidualMultiGrainAE, residual_decouple_penalty
 from .retail_data import build_retail_data
 from .retail_models import flatten_to_grid
-from .train import optimize_torch_runtime, resolve_device
+from .train import autocast_context, make_loader, optimize_torch_runtime, resolve_device
 from .retail_experiments import seed_everything
 
 
@@ -266,8 +266,17 @@ def swap_regularization_loss(model: nn.Module, out: dict[str, torch.Tensor], con
     return losses
 
 
-def run_epoch(model: nn.Module, loader: DataLoader, config: dict[str, Any], device: torch.device, optimizer, desc: str) -> dict[str, float]:
+def run_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    config: dict[str, Any],
+    device: torch.device,
+    optimizer,
+    desc: str,
+    scaler=None,
+) -> dict[str, float]:
     training = optimizer is not None
+    amp_enabled = bool(config["train"].get("amp", True)) and device.type == "cuda"
     model.train(training)
     totals: dict[str, float] = {}
     progress = tqdm(loader, desc=desc, unit="batch")
@@ -276,22 +285,28 @@ def run_epoch(model: nn.Module, loader: DataLoader, config: dict[str, Any], devi
         rb = residual_batch(batch, config)
         if training:
             optimizer.zero_grad(set_to_none=True)
-        out = model(rb["x"], rb["mask"])
-        losses = residual_loss(out, rb, config)
-        swap_losses = swap_regularization_loss(model, out, config)
-        if swap_losses:
-            total_swap = torch.tensor(0.0, device=losses["loss"].device)
-            weights = config.get("swap_regularization", {})
-            for key, value in swap_losses.items():
-                weight_key = key.replace("loss_swap_", "") + "_weight"
-                total_swap = total_swap + float(weights.get(weight_key, weights.get("weight", 0.0))) * value
-                losses[key] = value.detach()
-            losses["loss_swap"] = total_swap.detach()
-            losses["loss"] = losses["loss"] + total_swap
+        with torch.set_grad_enabled(training):
+            with autocast_context(device, amp_enabled):
+                out = model(rb["x"], rb["mask"])
+                losses = residual_loss(out, rb, config)
+                swap_losses = swap_regularization_loss(model, out, config)
+                if swap_losses:
+                    total_swap = torch.tensor(0.0, device=losses["loss"].device)
+                    weights = config.get("swap_regularization", {})
+                    for key, value in swap_losses.items():
+                        weight_key = key.replace("loss_swap_", "") + "_weight"
+                        total_swap = total_swap + float(weights.get(weight_key, weights.get("weight", 0.0))) * value
+                        losses[key] = value.detach()
+                    losses["loss_swap"] = total_swap.detach()
+                    losses["loss"] = losses["loss"] + total_swap
         if training:
-            losses["loss"].backward()
+            if scaler is None:
+                raise RuntimeError("training run_epoch requires a GradScaler")
+            scaler.scale(losses["loss"]).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), float(config["train"].get("grad_clip", 1.0)))
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
         for key, value in losses.items():
             totals[key] = totals.get(key, 0.0) + float(value.detach())
         progress.set_postfix(loss=f"{totals['loss'] / step:.4f}")
@@ -1148,6 +1163,8 @@ def save_visualization_outputs(arrays: dict[str, np.ndarray], out_dir: Path, out
 
 
 def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device: torch.device, root_out: Path) -> dict[str, Any]:
+    if bool(config["train"].get("reset_seed_per_variant", False)):
+        seed_everything(int(config["seed"]))
     variant_config = dict(config)
     if "loss_overrides" in variant:
         variant_config["loss"] = {**config["loss"], **variant["loss_overrides"]}
@@ -1192,21 +1209,27 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
             path.unlink()
     write_json(out_dir / "config.json", {"config": variant_config, "variant": variant})
     train_cfg = config["train"]
-    loader_kwargs = {
-        "batch_size": int(train_cfg["batch_size"]),
-        "num_workers": int(train_cfg.get("num_workers", 0)),
-        "pin_memory": bool(train_cfg.get("pin_memory", False)) and device.type == "cuda",
-    }
-    train_loader = DataLoader(bundle.train, shuffle=True, **loader_kwargs)
-    valid_loader = DataLoader(bundle.valid, shuffle=False, **loader_kwargs)
-    test_loader = DataLoader(bundle.test, shuffle=False, **loader_kwargs)
+    train_loader = make_loader(bundle.train, config, shuffle=True)
+    valid_loader = make_loader(bundle.valid, config, shuffle=False)
+    test_loader = make_loader(bundle.test, config, shuffle=False)
     model = make_residual_model(variant_config, variant, bundle.input_dim, bundle.days, bundle.hours).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(train_cfg["lr"]), weight_decay=float(train_cfg.get("weight_decay", 0.0)))
+    amp_enabled = bool(train_cfg.get("amp", True)) and device.type == "cuda"
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
+    logger.info(
+        "Runtime: device=%s amp=%s workers=%d train=%d valid=%d test=%d",
+        device,
+        amp_enabled,
+        int(train_cfg.get("num_workers", 0)),
+        len(bundle.train),
+        len(bundle.valid),
+        len(bundle.test),
+    )
     best = float("inf")
     best_path = out_dir / "best.pt"
     best_epoch = 0
     for epoch in range(1, int(train_cfg["epochs"]) + 1):
-        train_losses = run_epoch(model, train_loader, variant_config, device, optimizer, f"{name} train {epoch}")
+        train_losses = run_epoch(model, train_loader, variant_config, device, optimizer, f"{name} train {epoch}", scaler=scaler)
         valid_losses = run_epoch(model, valid_loader, variant_config, device, None, f"{name} valid {epoch}")
         row = {"epoch": epoch, **{f"train_{k}": v for k, v in train_losses.items()}, **{f"valid_{k}": v for k, v in valid_losses.items()}}
         append_jsonl(out_dir / "history.jsonl", row)
@@ -1218,7 +1241,8 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
             torch.save({"model": model.state_dict(), "config": variant_config, "variant": variant}, best_path)
     checkpoint = torch.load(best_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"])
-    train_arrays = predict_residuals(model, train_loader, variant_config, device)
+    probes_enabled = bool(variant_config.get("probes", {}).get("enabled", True))
+    train_arrays = predict_residuals(model, train_loader, variant_config, device) if probes_enabled else {}
     valid_arrays = predict_residuals(model, valid_loader, variant_config, device)
     test_arrays = predict_residuals(model, test_loader, variant_config, device)
     metrics = residual_metrics(test_arrays)

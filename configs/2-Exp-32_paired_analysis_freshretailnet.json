@@ -1,0 +1,41 @@
+{
+  "analysis": {
+    "summary_path": "runs/2-Exp-32_latent_vs_output_multiseed_freshretailnet/summary.json",
+    "output_dir": "runs/2-Exp-32_paired_analysis_freshretailnet",
+    "seed": 17,
+    "confidence": 0.95,
+    "n_bootstrap": 10000,
+    "model_comparison_metrics": [
+      "corrected_cell_mae",
+      "corrected_cell_wape",
+      "high_residual_top10_corrected_mae"
+    ],
+    "model_comparisons": [
+      {
+        "scenario": "series_mean",
+        "left": "output_decomp_centered",
+        "right": "paper_global_local_residual"
+      },
+      {
+        "scenario": "series_mean",
+        "left": "output_decomp_centered_no_interaction",
+        "right": "paper_global_local_residual"
+      },
+      {
+        "scenario": "series_mean",
+        "left": "output_decomp_centered",
+        "right": "four_factor_global_day_hour_interaction_residual"
+      },
+      {
+        "scenario": "series_mean",
+        "left": "output_decomp_centered",
+        "right": "output_decomp_no_center"
+      },
+      {
+        "scenario": "series_mean",
+        "left": "output_decomp_centered",
+        "right": "output_decomp_centered_no_interaction"
+      }
+    ]
+  }
+}
