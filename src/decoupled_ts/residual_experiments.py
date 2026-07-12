@@ -16,7 +16,7 @@ from .data import load_config
 from .experiment_logging import append_jsonl, setup_run_logger, write_json
 from .metrics import regression_metrics
 from .residual_diagnostics import _labels_from_grid
-from .residual_models import OutputDecompositionResidualModel, ResidualFlattenAE, ResidualMultiGrainAE, residual_decouple_penalty
+from .residual_models import EmpiricalAnovaResidualModel, OutputDecompositionResidualModel, ResidualFlattenAE, ResidualMultiGrainAE, residual_decouple_penalty
 from .retail_data import build_retail_data
 from .retail_models import flatten_to_grid
 from .train import autocast_context, make_loader, optimize_torch_runtime, resolve_device
@@ -163,6 +163,8 @@ def make_residual_model(config: dict[str, Any], variant: dict[str, Any], input_d
             use_interaction=bool(variant.get("use_interaction", False)),
             dropout=float(model_cfg.get("dropout", 0.1)),
         )
+    if variant["type"] == "empirical_anova":
+        return EmpiricalAnovaResidualModel(days=days, hours=hours)
     if variant["type"] == "output_decomposition":
         return OutputDecompositionResidualModel(
             input_dim=input_dim,
@@ -770,6 +772,20 @@ def residual_axis_diagnostics(
         return {}
     abs_mean = float(np.mean(np.abs(residual[keep])))
     metrics: dict[str, float] = {"diag_residual_abs_mean": abs_mean}
+    if "sales" in arrays:
+        counts = observed.sum(axis=(1, 2))
+        keep_series = counts > 0
+        if int(keep_series.sum()) >= 2:
+            denom = np.clip(counts, 1.0, None)
+            series_abs_residual = (np.abs(residual) * observed).sum(axis=(1, 2)) / denom
+            series_sales = (arrays["sales"] * observed).sum(axis=(1, 2)) / denom
+            metrics["diag_scale_dependence_corr"] = _corr(
+                series_sales[keep_series], series_abs_residual[keep_series]
+            )
+            metrics["diag_scale_dependence_log_corr"] = _corr(
+                np.log1p(np.clip(series_sales[keep_series], 0.0, None)),
+                np.log1p(series_abs_residual[keep_series]),
+            )
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     residual_t = torch.from_numpy(np.ascontiguousarray(residual)).to(device=device, dtype=torch.float32)

@@ -179,6 +179,61 @@ def residual_decouple_penalty(out: dict[str, torch.Tensor]) -> torch.Tensor:
     return covariance_penalty([part for part in parts if part is not None])
 
 
+class EmpiricalAnovaResidualModel(nn.Module):
+    """Parameter-free naive baseline: masked main-effects ANOVA of the observed residuals.
+
+    From the residual channel of the input grid, estimates the overall masked
+    mean (global component), per-day masked means minus the overall mean
+    (day component), and per-hour masked means minus the overall mean
+    (hour component), then predicts ``r_hat = g + a + c`` with the interaction
+    fixed at zero. Days or hours without observed cells receive a zero effect,
+    which also covers the future-day setting where the residual channel of the
+    trailing days is masked out: there the prediction carries over only the
+    global and hour components, as a classical decomposition would.
+
+    No learning takes place; a dummy parameter keeps the generic training loop
+    (optimizer / GradScaler) functional while gradients are exactly zero.
+    """
+
+    def __init__(self, days: int, hours: int):
+        super().__init__()
+        self.days = days
+        self.hours = hours
+        self._dummy = nn.Parameter(torch.zeros(1))
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> dict[str, torch.Tensor]:
+        grid = flatten_to_grid(x)
+        mask_grid = flatten_to_grid(mask)
+        residual = grid[..., 0]
+        observed = mask_grid[..., 0]
+        batch = residual.shape[0]
+
+        total = (residual * observed).sum(dim=(1, 2))
+        count = observed.sum(dim=(1, 2)).clamp_min(1.0)
+        g = total / count
+
+        day_count = observed.sum(dim=2)
+        day_mean = (residual * observed).sum(dim=2) / day_count.clamp_min(1.0)
+        day_effect = torch.where(day_count > 0, day_mean - g[:, None], torch.zeros_like(day_mean))
+
+        hour_count = observed.sum(dim=1)
+        hour_mean = (residual * observed).sum(dim=1) / hour_count.clamp_min(1.0)
+        hour_effect = torch.where(hour_count > 0, hour_mean - g[:, None], torch.zeros_like(hour_mean))
+
+        global_component = g[:, None, None].expand(batch, self.days, self.hours)
+        day_component = day_effect[:, :, None].expand(batch, self.days, self.hours)
+        hour_component = hour_effect[:, None, :].expand(batch, self.days, self.hours)
+        interaction_component = torch.zeros_like(global_component)
+        residual_hat = global_component + day_component + hour_component + self._dummy * 0.0
+        return {
+            "global_component": global_component,
+            "day_component": day_component,
+            "hour_component": hour_component,
+            "interaction_component": interaction_component,
+            "residual_hat": residual_hat,
+        }
+
+
 class OutputDecompositionResidualModel(nn.Module):
     """Residual model that decodes separate global/day/hour/interaction output components."""
 
