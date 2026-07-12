@@ -169,7 +169,7 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-18_freshretailnet_cali
 
 1. 強い baseline では残差構造が消える。
 2. `series_mean` target では hour 構造が残る。
-3. output decomposition は hour 構造を拾う。
+3. 4変数への分解は hour 構造を拾う。
 4. raw 補正は bias を持つ。
 5. validation shrinkage で bias を抑えると、予測補正としても使いやすくなる。
 

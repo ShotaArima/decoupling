@@ -7,7 +7,7 @@
 目的は以下の 3 つである。
 
 1. 残差を global/day/hour/interaction に分ける設計が、合成データで正しく働くことを示す。
-2. FreshRetailNet で、従来の暗黙的な latent 分離よりも、出力分解モデルの方が解釈しやすいことを示す。
+2. FreshRetailNet で、従来の暗黙的な latent 分離よりも、4変数への分解モデルの方が解釈しやすいことを示す。
 3. 基準値 $b$ が強い状況でも、外れケースや構造が強い subset では $b+\hat r$ が役立つ可能性を検証する。
 
 ## 1.1 現在の到達状況
@@ -38,10 +38,10 @@
 | B1 | ANOVA direct decomposition | 非学習の直交分解基準 |
 | B2 | single local residual AE | 分離なしの学習基準 |
 | B3 | latent concat model | これまでのモデル |
-| P1 | output decomposition | 出力を $g,a,c,u$ に分ける |
-| P2 | output decomposition + centering constraints | 成分制約あり |
-| P3 | output decomposition + leakage suppression | 情報漏れ抑制あり |
-| P4 | output decomposition + swap | swap も併用 |
+| P1 | 4変数への分解 | 出力を $g,a,c,u$ に分ける |
+| P2 | 4変数への分解と centering constraints | 成分制約あり |
+| P3 | 4変数への分解 + leakage suppression | 情報漏れ抑制あり |
+| P4 | 4変数への分解 + swap | swap も併用 |
 
 論文としては、最終的に P2 または P3 を提案法にするのが自然である。
 
@@ -154,7 +154,7 @@ $$
 
 | 条件 | 内容 |
 |---|---|
-| no constraints | 出力分解だけ |
+| no constraints | 4変数への分解だけ |
 | + day/hour centering | day/hour の平均ゼロ |
 | + interaction centering | interaction の主効果除去 |
 | + leakage suppression | 不要情報の漏れ抑制 |
@@ -293,7 +293,7 @@ FreshRetailNet では、成功条件は target に依存する。
 
 | 比較 | 目的 |
 |---|---|
-| B3 vs P2 | 出力分解制約の効果 |
+| B3 vs P2 | 4変数への分解制約の効果 |
 | P2 vs P3 | leakage 抑制の効果 |
 | B0 vs P2/P3 | baseline 補正として意味があるか |
 | synthetic true vs predicted | 成分回復の妥当性 |
@@ -328,7 +328,7 @@ subset ごとに $\Delta_g,\Delta_a,\Delta_c,\Delta_u$ を出す。
 
 ### Figure 1: Model architecture
 
-従来の latent concat model と提案する output decomposition model を並べる。
+従来の latent concat model と提案する 4変数モデル を並べる。
 
 ### Figure 2: Synthetic true vs predicted components
 

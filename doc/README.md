@@ -32,3 +32,6 @@
 | 2-Exp-23 | [2-Exp-23_paper_tables.md](2-Exp-23_paper_tables.md) | 論文用 final table の自動集約 |
 | 2-Exp-24 | [2-Exp-24_freshretailnet_scale_sensitivity.md](2-Exp-24_freshretailnet_scale_sensitivity.md) | FreshRetailNet の系列数感度確認 |
 | 2-Exp-25 | [2-Exp-25_freshretailnet_block_robustness.md](2-Exp-25_freshretailnet_block_robustness.md) | FreshRetailNet の系列ブロック頑健性確認 |
+| 2-Exp-26 | [2-Exp-26_global_local_to_four_factor_design.md](2-Exp-26_global_local_to_four_factor_design.md) | 元論文 `global/local` から 4 成分分割への橋渡し |
+| 2-Exp-27 | [2-Exp-27_direct_vs_residual_bridge.md](2-Exp-27_direct_vs_residual_bridge.md) | direct target と residual target の最小比較 |
+| 2-Exp-28 | [2-Exp-28_latent_vs_output_decomposition.md](2-Exp-28_latent_vs_output_decomposition.md) | latent split と 4変数への分解の直接比較 |

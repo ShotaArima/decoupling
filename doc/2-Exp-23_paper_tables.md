@@ -149,7 +149,7 @@ FreshRetailNet では、提案法が常に強いというより、残差に hour
 本文の主張は次の形にする。
 
 ```text
-Synthetic では、成分が存在する条件で output decomposition が成分を回復できる。
+Synthetic では、成分が存在する条件で 4変数への分解 が成分を回復できる。
 FreshRetailNet では、残差に hour 構造が残る target で、予測補正と high residual 改善が確認できる。
 一方、強い same-hour baseline 後の残差では構造が薄く、改善は小さい。
 ```

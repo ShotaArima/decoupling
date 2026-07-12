@@ -1,0 +1,82 @@
+{
+  "seed": 17,
+  "sweep": {
+    "seeds": [17],
+    "output_dir": "runs/2-Exp-29_synthetic_component_recovery_figure_smoke",
+    "scenarios": [
+      {
+        "name": "base",
+        "overrides": {}
+      }
+    ]
+  },
+  "dataset": {
+    "name": "component_residual_retail",
+    "n_series": 120,
+    "days": 21,
+    "hours": 24,
+    "forecast_days": 2,
+    "recent_days": 7,
+    "noise_std": 0.12,
+    "stockout_rate": 0.03,
+    "global_scale": 0.55,
+    "day_scale": 0.7,
+    "hour_scale": 0.8,
+    "interaction_scale": 0.6,
+    "valid_ratio": 0.15,
+    "test_ratio": 0.15
+  },
+  "model": {
+    "hidden_dim": 160,
+    "global_dim": 10,
+    "local_dim": 10,
+    "day_dim": 10,
+    "hour_dim": 10,
+    "interaction_dim": 8,
+    "dropout": 0.1
+  },
+  "loss": {
+    "decouple_weight": 0.01,
+    "component_constraint_weight": 0.0,
+    "residual_bias_weight": 0.0,
+    "series_residual_bias_weight": 0.0
+  },
+  "residual": {
+    "baseline_method": "same_hour_recent_mean",
+    "target": "noisy_true_residual"
+  },
+  "calibration": {
+    "enabled": false
+  },
+  "swap_regularization": {
+    "enabled": false,
+    "weight": 0.05
+  },
+  "output": {
+    "save_latent_arrays": true,
+    "save_residual_predictions": false,
+    "save_checkpoints": false,
+    "save_hour_heatmap": true,
+    "save_visualization_tables": true
+  },
+  "train": {
+    "batch_size": 64,
+    "epochs": 1,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "num_workers": 0,
+    "pin_memory": false,
+    "selection_metric": "valid_loss_residual_reconstruction",
+    "device": "auto",
+    "output_dir": "runs/2-Exp-29_synthetic_component_recovery_figure_smoke/base"
+  },
+  "experiments": [
+    {
+      "name": "output_decomp_centered",
+      "type": "output_decomposition",
+      "center_components": true,
+      "use_interaction": true
+    }
+  ]
+}

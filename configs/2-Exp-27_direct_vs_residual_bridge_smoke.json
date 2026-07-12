@@ -1,0 +1,88 @@
+{
+  "seed": 11,
+  "dataset": {
+    "name": "synthetic_retail",
+    "n_series": 128,
+    "days": 14,
+    "hours": 24,
+    "forecast_days": 1,
+    "recent_days": 7,
+    "valid_ratio": 0.15,
+    "test_ratio": 0.15,
+    "noise_std": 0.15,
+    "stockout_rate": 0.06
+  },
+  "model": {
+    "hidden_dim": 40,
+    "global_dim": 4,
+    "local_dim": 4,
+    "day_dim": 4,
+    "hour_dim": 4,
+    "interaction_dim": 3,
+    "dropout": 0.1
+  },
+  "loss": {
+    "decouple_weight": 0.001,
+    "component_constraint_weight": 0.0,
+    "residual_bias_weight": 0.0,
+    "series_residual_bias_weight": 0.0
+  },
+  "residual": {
+    "baseline_method": "series_mean",
+    "target": "baseline_residual"
+  },
+  "calibration": {
+    "enabled": false
+  },
+  "swap_regularization": {
+    "enabled": false,
+    "weight": 0.05
+  },
+  "output": {
+    "save_latent_arrays": false,
+    "save_residual_predictions": false,
+    "save_checkpoints": false,
+    "save_hour_heatmap": true
+  },
+  "train": {
+    "batch_size": 32,
+    "epochs": 1,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "num_workers": 0,
+    "pin_memory": false,
+    "selection_metric": "valid_loss_residual_reconstruction",
+    "device": "auto",
+    "output_dir": "runs/2-Exp-27_direct_vs_residual_bridge_smoke"
+  },
+  "experiments": [
+    {
+      "name": "paper_global_local_residual",
+      "type": "multigrain_ae",
+      "use_global": true,
+      "use_local": true,
+      "use_day": false,
+      "use_hour": false,
+      "use_interaction": false
+    },
+    {
+      "name": "four_factor_global_day_hour_residual",
+      "type": "multigrain_ae",
+      "use_global": true,
+      "use_local": false,
+      "use_day": true,
+      "use_hour": true,
+      "use_interaction": false
+    },
+    {
+      "name": "four_factor_global_day_hour_interaction_residual",
+      "type": "multigrain_ae",
+      "use_global": true,
+      "use_local": false,
+      "use_day": true,
+      "use_hour": true,
+      "use_interaction": true
+    }
+  ]
+}

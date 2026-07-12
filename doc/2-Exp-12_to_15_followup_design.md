@@ -1,4 +1,4 @@
-# 2-Exp-12 to 2-Exp-15: Follow-up Experiments After Output Decomposition
+# 2-Exp-12 to 2-Exp-15: Follow-up Experiments After Four-Factor Modeling
 
 ## 背景
 
@@ -190,7 +190,7 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-15_final_freshretailne
 
 論文上の主張は次の形にする。
 
-> 真の residual 成分が存在し、平均ゼロ制約が妥当な場合、出力分解モデルは成分を高精度に回収できる。実データでは、残差構造が強い subset と bias 制御が必要であり、全系列で無条件に改善するものではない。
+> 真の residual 成分が存在し、平均ゼロ制約が妥当な場合、4変数への分解モデルは成分を高精度に回収できる。実データでは、残差構造が強い subset と bias 制御が必要であり、全系列で無条件に改善するものではない。
 
 ## 実験結果提出時に見る順番
 
@@ -235,7 +235,7 @@ uv run decoupled-ts residual-sweep --config configs/2-Exp-15_final_freshretailne
 解釈:
 
 - `residual_structure_score` や `hour/weekday/discount` による subset 切り分けでは、改善する領域を見つけられなかった。
-- `component_ablation_without_hour_mae_delta` はほぼゼロで、出力分解された day/hour/interaction が補正にほとんど効いていない。
+- `component_ablation_without_hour_mae_delta` はほぼゼロで、4成分として出した day/hour/interaction が補正にほとんど効いていない。
 - `low_structure_negative_control` と構造上位 subset の差も小さい。つまり、今回の subset score は「モデルが使える残差構造」を十分に選別できていない。
 - FreshRetailNet の `same_hour_recent_mean` baseline が非常に強く、残差に残る信号がモデルの汎化可能な信号ではなくノイズに近い可能性が高い。
 
@@ -292,7 +292,7 @@ synthetic の最終比較では、`output_decomp_centered` が最も強い。
 
 解釈:
 
-- 出力分解 + 平均ゼロ制約は、controlled setting では非常に強い。
+- 4変数への分解 + 平均ゼロ制約は、controlled setting では非常に強い。
 - `output_decomp_no_center` は総 residual の再構成はできるが、成分復元は崩れる。特に `global` の符号反転と `interaction` の低相関が大きい。
 - これは「予測精度が高いこと」と「成分が意味を持って分離されること」は別であり、平均ゼロ制約が分離のために必要である、という論拠になる。
 

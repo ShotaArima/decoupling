@@ -67,7 +67,7 @@ interaction component は synthetic での成立条件として示し、FreshRet
 情報漏れを抑えすぎると、必要な情報まで消える可能性がある。
 
 2-Exp-23 時点では、leakage suppression は本文の主軸から外してよい。
-主提案は output decomposition + centering であり、leakage suppression は appendix または今後課題に回す。
+主提案は 4変数への分解と centering であり、leakage suppression は appendix または今後課題に回す。
 
 ### 対応
 
@@ -173,6 +173,21 @@ synthetic では強く、FreshRetailNet では弱い。
 | real data interaction が弱い | synthetic では強いが real では主張しにくい | synthetic 中心、real は limitation |
 | 本文表が多すぎる | 2-Exp-23 の statistical table は 56 行 | 本文用と appendix 用に分ける |
 | target selection が恣意的に見える | `series_mean_all` が主成功例 | 2-Exp-16/23 の target sensitivity として説明 |
+
+2-Exp-26/27 後に追加された重要なリスクは次である。
+
+| リスク | 現状 | 論文での扱い |
+|---|---|---|
+| latent split だけでは proposal の中心にならない | direct では day/hour が小幅改善、residual では `global/local` が最良 | 主張を 4変数への分解 + constraints に置く |
+| 周辺研究との差分が latent disentanglement に見えやすい | 元論文との近さから誤読されやすい | related work で latent 分離と 4変数への分解の違いを明記 |
+| residual target が恣意的に見える | baseline により residual structure が変わる | baseline/residual 診断を前処理として位置づける |
+
+関連研究レビューを踏まえると、今後の改良は「より多くの latent を追加する」方向ではなく、次を優先する。
+
+- output component の制約を明確にする。
+- residual structure が残る baseline を診断する。
+- high residual case と bias を評価軸に入れる。
+- temporal smoothness や self-supervised pretraining は今後課題に回す。
 
 ## 8. 中止判断
 

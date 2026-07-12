@@ -40,7 +40,7 @@ seed は 3 種類にする。
 
 | model | 目的 |
 |---|---|
-| `centered_raw` | 補正前 calibration なしの出力分解 |
+| `centered_raw` | 補正前 calibration なしの4変数への分解 |
 | `mae_grid_reference` | validation MAE を重視した calibration |
 | `bias_constrained_001` | validation bias を抑えつつ補正するモデル |
 

@@ -84,6 +84,21 @@ class HourEncoder(nn.Module):
         return self.net(torch.cat([mean, torch.sqrt(var + 1e-6)], dim=-1))
 
 
+class CellLocalEncoder(nn.Module):
+    """Local latent encoder matching the paper-style one latent per time window/cell."""
+
+    def __init__(self, input_dim: int, hidden_dim: int, local_dim: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, local_dim),
+        )
+
+    def forward(self, grid: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        return self.net(torch.cat([grid, mask], dim=-1))
+
+
 class InteractionEncoder(nn.Module):
     def __init__(self, day_dim: int, hour_dim: int, hidden_dim: int, interaction_dim: int):
         super().__init__()
@@ -111,9 +126,11 @@ class RetailMultiGrainModel(nn.Module):
         hours: int,
         hidden_dim: int,
         global_dim: int,
+        local_dim: int,
         day_dim: int,
         hour_dim: int,
         interaction_dim: int,
+        use_local: bool = False,
         use_day: bool = True,
         use_hour: bool = True,
         use_interaction: bool = False,
@@ -126,9 +143,11 @@ class RetailMultiGrainModel(nn.Module):
         self.days = days
         self.hours = hours
         self.global_dim = global_dim
+        self.local_dim = local_dim if use_local else 0
         self.day_dim = day_dim
         self.hour_dim = hour_dim
         self.interaction_dim = interaction_dim if use_interaction else 0
+        self.use_local = use_local
         self.use_day = use_day
         self.use_hour = use_hour
         self.use_interaction = use_interaction
@@ -136,10 +155,12 @@ class RetailMultiGrainModel(nn.Module):
         self.forecast_activation = forecast_activation
 
         self.global_encoder = GlobalEncoder(input_dim, hidden_dim, global_dim)
+        self.local_encoder = CellLocalEncoder(input_dim, hidden_dim, local_dim)
         self.day_encoder = DayEncoder(input_dim, hidden_dim, day_dim)
         self.hour_encoder = HourEncoder(input_dim, hidden_dim, hour_dim)
         self.interaction_encoder = InteractionEncoder(day_dim, hour_dim, hidden_dim, interaction_dim)
         latent_dim = global_dim
+        latent_dim += local_dim if use_local else 0
         latent_dim += day_dim if use_day else 0
         latent_dim += hour_dim if use_hour else 0
         latent_dim += interaction_dim if use_interaction else 0
@@ -159,6 +180,7 @@ class RetailMultiGrainModel(nn.Module):
         grid = flatten_to_grid(x)
         mask_grid = flatten_to_grid(mask)
         z_global = self.global_encoder(grid, mask_grid)
+        z_local = self.local_encoder(grid, mask_grid)
         z_day = self.day_encoder(grid, mask_grid)
         z_hour = self.hour_encoder(grid, mask_grid)
         z_interaction = self.interaction_encoder(z_day, z_hour)
@@ -166,6 +188,7 @@ class RetailMultiGrainModel(nn.Module):
             "grid": grid,
             "mask_grid": mask_grid,
             "z_global": z_global,
+            "z_local": z_local,
             "z_day": z_day,
             "z_hour": z_hour,
             "z_interaction": z_interaction,
@@ -176,6 +199,8 @@ class RetailMultiGrainModel(nn.Module):
         days = encoded["grid"].shape[1]
         hours = encoded["grid"].shape[2]
         parts = [encoded["z_global"][:, None, None, :].expand(batch, days, hours, -1)]
+        if self.use_local:
+            parts.append(encoded["z_local"])
         if self.use_day:
             parts.append(encoded["z_day"][:, :, None, :].expand(batch, days, hours, -1))
         if self.use_hour:
@@ -186,16 +211,43 @@ class RetailMultiGrainModel(nn.Module):
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> dict[str, torch.Tensor]:
         encoded = self.encode(x, mask)
-        latent = self._latent_grid(encoded)
-        sales_grid = F.softplus(self.forecast_head(latent).squeeze(-1))
-        recon_grid = self.reconstruction_head(latent)
+        decoded = self.decode_history_from_encoded(encoded)
         target_sum = self._predict_future_from_encoded(encoded, self.forecast_days)
         return {
             "prediction": target_sum,
-            "sales_grid": sales_grid,
-            "reconstruction": recon_grid,
+            **decoded,
             **encoded,
         }
+
+    def decode_history_from_encoded(self, encoded: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        latent = self._latent_grid(encoded)
+        sales_grid = F.softplus(self.forecast_head(latent).squeeze(-1))
+        recon_grid = self.reconstruction_head(latent)
+        return {"sales_grid": sales_grid, "reconstruction": recon_grid}
+
+    def decode_history_from_parts(
+        self,
+        reference: dict[str, torch.Tensor],
+        z_global: torch.Tensor | None = None,
+        z_local: torch.Tensor | None = None,
+        z_day: torch.Tensor | None = None,
+        z_hour: torch.Tensor | None = None,
+        z_interaction: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        encoded = dict(reference)
+        if z_global is not None:
+            encoded["z_global"] = z_global
+        if z_local is not None:
+            encoded["z_local"] = z_local
+        if z_day is not None:
+            encoded["z_day"] = z_day
+        if z_hour is not None:
+            encoded["z_hour"] = z_hour
+        if z_interaction is not None:
+            encoded["z_interaction"] = z_interaction
+        if self.use_interaction and z_interaction is None and (z_day is not None or z_hour is not None):
+            encoded["z_interaction"] = self.interaction_encoder(encoded["z_day"], encoded["z_hour"])
+        return self.decode_history_from_encoded(encoded)
 
     @torch.no_grad()
     def predict_future_sum(self, x: torch.Tensor, mask: torch.Tensor, forecast_days: int) -> torch.Tensor:
@@ -209,6 +261,9 @@ class RetailMultiGrainModel(nn.Module):
         z_hour = encoded["z_hour"]
         batch, hours = z_hour.shape[:2]
         parts = [encoded["z_global"][:, None, None, :].expand(batch, forecast_days, hours, -1)]
+        if self.use_local:
+            recent_local = encoded["z_local"][:, -min(7, encoded["z_local"].shape[1]) :, :, :].mean(dim=1)
+            parts.append(recent_local[:, None, :, :].expand(batch, forecast_days, hours, -1))
         if self.use_day:
             parts.append(future_day[:, :, None, :].expand(batch, forecast_days, hours, -1))
         if self.use_hour:

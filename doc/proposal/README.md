@@ -1,5 +1,48 @@
 # Proposal: 基準値からのズレを説明する残差成分モデル
 
+更新日: 2026-06-30
+
+## 2026-06-30 ゼミ後の更新方針
+
+6 月 30 日のゼミでは、proposal の中心を次の形に固定する。
+
+```text
+小売需要では、単純な基準値だけで説明できる部分が大きい。
+そこで、売上そのものを一から予測するのではなく、
+基準値から外れた部分を、読める単位に分けて補正する。
+```
+
+この方針では、基準値 $b$ は置き換える対象ではない。
+店舗・商品平均や直近 7 日の同じ時間帯平均のような、既に使える単純な予測値を土台にし、その後に残るズレを研究対象にする。
+
+したがって、最終的な問いは次である。
+
+```text
+売上はいくらか。
+```
+
+ではなく、
+
+```text
+既に使える基準値から、どの方向に、どの単位で外れるか。
+```
+
+である。
+
+教授コメントを踏まえて、proposal では特に次を明確にする。
+
+| 観点 | 更新内容 |
+|---|---|
+| 残差予測への切り替え | $y$ を直接予測するのではなく、$r=y-b$ を学習対象にする理由を最初に説明する |
+| global/local からの接続 | 既存研究の global/local は出発点であり、小売需要では local の中に day/hour/interaction が混ざると説明する |
+| 4変数への分解の必要性 | latent を分けるだけでは decoder 内で混ざるため、最終的な補正量を series/day/hour/interaction として出す |
+| 平均ゼロ制約 | 予測値を変えずに成分間を移せる余地を減らし、day/hour/interaction の担当範囲を固定する制約として説明する |
+| 主張の強さ | どの基準値でも常に勝つとは書かず、残差に構造が残る条件で補正と解釈が効くと書く |
+| 利用者の恩恵 | 発注・補充、店舗運営、販促、需要分析の各立場で、基準値からの外れ方を読めることを示す |
+
+今後の作業は、追加実験を増やすことではなく、日本語論文として主張を通し、7 分発表と国際会議投稿へ展開することである。
+詳細な逆算スケジュールは [schedule.md](schedule.md) に置く。
+
 ## 目的
 
 この proposal は、これまでの `2-Exp-*` 系列で見えた課題を踏まえ、修士論文または論文 1 本として成立する形に研究を収束させるための計画である。
@@ -33,6 +76,19 @@ $$
 合成データでは、残差に明確な構造がある場合、`global/day/hour/interaction` の成分分解は成立した。特に `output_decomp_centered` は、真の成分がある synthetic で global/day/hour をほぼ完全に回復し、interaction も高い相関で回復した。
 
 したがって次の研究の中心は、単に latent を分けることではなく、**基準値からのズレを、出力成分として読める形に分けること**に置く。
+
+なお、2-Exp-26 では、元論文に近い `global + local` 分解を通常の売上予測に移植し、local を `day/hour/interaction` に分ける比較も行った。FreshRetailNet では `global + day + hour` が `global + local` より WAPE を 0.6233 から 0.6133 に小幅改善した一方、interaction まで加えると WAPE は 0.6267 となり、通常予測では安定した改善にならなかった。
+
+この結果は、day/hour 分割が小売データに合う導入であることを示す一方で、売上全体を直接 4 成分に分けるだけでは interaction の意義が見えにくいことも示している。そのため本研究では、基準値で説明できる主効果を除いた残差に対して、day/hour/interaction の表現学習と 4変数への分解を行う。
+
+さらに 2-Exp-27 では、`series_mean` residual に対して同じ latent split を比較した。全モデルが baseline MAE 0.0721 を補正したが、最も良かったのは `global/local` residual reference で corrected MAE 0.0593 だった。day/hour split は 0.0671、interaction 付きは 0.0614 であり、潜在表現を細分化するだけでは十分ではなかった。
+
+2-Exp-28 では、同じ `series_mean` residual 上で latent split 系と 4変数モデル系を直接比較した。
+centering ありの4変数モデルは corrected MAE 0.0572 まで改善し、latent split 系の最良である `paper_global_local_residual` の 0.0609 を上回った。
+高残差上位 10% でも、latent split 系は baseline 0.2923 に対して同等または悪化したが、`output_decomp_centered` は 0.2656、`output_decomp_centered_no_interaction` は 0.2681 まで改善した。
+このため、主提案を latent split ではなく 4変数への分解と centering に置く論理は、Exp-28 によって強められる。
+
+このため、proposal の中心は「latent を細かく分けること」ではなく、**残差出力そのものを global/day/hour/interaction 成分に分け、制約によって各成分の意味を固定すること**に置く。
 
 ## 中心仮説
 
@@ -97,7 +153,7 @@ $$
 | 2-Exp-8 | structured synthetic では仮説が成立 | 構造があればモデルは動く |
 | 2-Exp-9 | FreshRetailNet subset では baseline を超えにくい | 実データでは残差構造が弱い |
 | 2-Exp-10 | factor subset と ablation を追加 | day は少し見えるが hour/interaction は弱い |
-| 2-Exp-11〜15 | 出力成分分解と follow-up 実験を追加 | latent 分離より output 分解へ主張を移す |
+| 2-Exp-11〜15 | 4成分化と follow-up 実験を追加 | latent 分離より 4変数への分解へ主張を移す |
 | 2-Exp-16 | residual target sensitivity を確認 | FreshRetailNet では target 設計が成否を左右する |
 | 2-Exp-17 | `series_mean` residual の hour 成分を検証 | hour 構造が残る residual では提案法が意味を持つ |
 | 2-Exp-18〜19 | calibration と bias 制約を検証 | 予測補正、bias、高残差改善の trade-off を整理 |
@@ -105,6 +161,9 @@ $$
 | 2-Exp-21 | hour profile と heatmap 可視化 | 成功例と限界例を図で示せる |
 | 2-Exp-22 | synthetic difficulty final | 成分回復、centering、interaction の必要性を主表にできる |
 | 2-Exp-23 | paper table aggregation | 論文用の主要表を再生成可能に固定 |
+| 2-Exp-26 | global/local から 4 成分 split への橋渡し | 元論文からの論理の飛躍を減らす |
+| 2-Exp-27 | direct/residual bridge | residual target は有効だが latent split だけでは不十分 |
+| 2-Exp-28 | latent split vs 4変数への分解 | 4変数への分解と centering を主提案に置く根拠 |
 
 ## ここまでで分かったこと
 
@@ -215,8 +274,8 @@ synthetic では interaction の必要性を確認できたが、FreshRetailNet 
    - ANOVA 的な非学習分解
    - 現行 latent concat model
    - single local model
-   - output decomposition model
-   - output decomposition + constraints
+   - 4変数モデル
+   - 4変数への分解 + constraints
 
 5. **再現性**
    - 3〜5 seeds
@@ -226,6 +285,7 @@ synthetic では interaction の必要性を確認できたが、FreshRetailNet 
 
 ## ドキュメント構成
 
+- [related_work_and_improvement.md](related_work_and_improvement.md): 周辺研究の整理、現状課題、改良方針
 - [formulation.md](formulation.md): 基準値 $b$、残差 $y-b$、平均ゼロ制約の定式化
 - [paper_direction.md](paper_direction.md): 6 月末原稿に向けた主張の再整理
 - [theory.md](theory.md): 数理的な保証、識別可能性、収束の考え方
@@ -247,7 +307,7 @@ synthetic では interaction の必要性を確認できたが、FreshRetailNet 
 現時点の論文の核は次である。
 
 ```text
-Synthetic では、成分が存在する条件で output decomposition が成分を回復できる。
+Synthetic では、成分が存在する条件で 4変数への分解 が成分を回復できる。
 FreshRetailNet では、残差に hour 構造が残る target で予測補正と high residual 改善が確認できる。
 一方、強い same-hour baseline 後の残差では構造が薄く、改善は小さい。
 ```
