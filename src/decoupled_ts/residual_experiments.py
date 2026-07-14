@@ -98,6 +98,12 @@ def residual_batch(batch: dict[str, torch.Tensor], config: dict[str, Any]) -> di
         baseline = _same_hour_recent_mean_torch(sales, baseline_observed, recent_days)
         residual = sales - baseline
         extra = {}
+    elif method == "log1p_series_mean":
+        log_sales = torch.log1p(torch.clamp_min(sales, 0.0))
+        baseline_log = _series_mean_torch(log_sales, baseline_observed)
+        baseline = torch.expm1(baseline_log).clamp_min(0.0)
+        residual = log_sales - baseline_log
+        extra = {"baseline_log": baseline_log}
     elif method == "log1p_same_hour_recent_mean":
         recent_days = int(residual_cfg.get("recent_days", config["dataset"].get("recent_days", 7)))
         log_sales = torch.log1p(torch.clamp_min(sales, 0.0))
@@ -108,7 +114,7 @@ def residual_batch(batch: dict[str, torch.Tensor], config: dict[str, Any]) -> di
     else:
         raise ValueError(
             "residual experiments support baseline_method in "
-            "{'series_mean', 'weekday_same_hour_mean', 'same_hour_recent_mean', 'log1p_same_hour_recent_mean'}"
+            "{'series_mean', 'log1p_series_mean', 'weekday_same_hour_mean', 'same_hour_recent_mean', 'log1p_same_hour_recent_mean'}"
         )
     x_residual = batch["x"].clone()
     x_residual[:, 0, :] = residual.reshape(residual.shape[0], -1)
@@ -709,7 +715,10 @@ def future_holdout_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
         baseline = arrays["baseline"][region]
         residual = arrays["residual"][region]
         pred = arrays["residual_hat"][region]
-        corrected = baseline + pred
+        if "baseline_log" in arrays:
+            corrected = np.clip(np.expm1(arrays["baseline_log"][region] + pred), 0.0, None)
+        else:
+            corrected = baseline + pred
         metrics[f"{prefix}_baseline_cell_mae"] = float(np.mean(np.abs(baseline - sales)))
         metrics[f"{prefix}_corrected_cell_mae"] = float(np.mean(np.abs(corrected - sales)))
         metrics[f"{prefix}_corrected_cell_bias"] = float(np.mean(corrected - sales))
