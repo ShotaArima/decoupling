@@ -1,3 +1,11 @@
+"""Residual diagnostics.
+
+Convention: ``observed`` is the binary observation indicator (the paper's
+mask ``m_{i,d,h}``); ``observed > 0`` selects observed cells and
+``observed <= 0`` selects stockout cells.  See
+``decoupled_ts.data.observed_from_stock``.
+"""
+
 from __future__ import annotations
 
 import csv

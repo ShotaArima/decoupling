@@ -396,6 +396,8 @@ def residual_metrics(arrays: dict[str, np.ndarray]) -> dict[str, float]:
 
 
 def _observed_mean(values: np.ndarray, observed: np.ndarray) -> float:
+    # observed > 0 = observed cell (paper's m=1), observed <= 0 = stockout;
+    # see decoupled_ts.data.observed_from_stock.
     keep = observed > 0
     if not keep.any():
         return 0.0

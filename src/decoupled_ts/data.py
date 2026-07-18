@@ -1,3 +1,23 @@
+"""Data loading and tensorisation for FreshRetailNet-style hourly retail data.
+
+Terminology for stockout handling (paper <-> code):
+
+    paper            code                                     meaning
+    ---------------  ---------------------------------------  ------------------------------------
+    m_{i,d,h} = 1    ``observed = 1`` (``mask`` channel 0)    observed cell (contributes to loss)
+    m_{i,d,h} = 0    ``observed = 0`` /                       stockout cell (excluded from loss)
+                     ``stock_status == stockout_value``
+
+The binary observation indicator is called ``observed`` throughout the code
+base and equals the paper's observation mask ``m_{i,d,h}``.  ``mask`` refers
+to the multi-channel mask tensor whose channel 0 (the sales channel) is
+``observed``; the remaining channels are constant 1.  ``stock_status`` is the
+raw stock flag and ``stockout_value`` (=1 for FreshRetailNet) is the value
+that marks a stockout.  Use :func:`observed_from_stock` to derive
+``observed`` from the raw flag instead of comparing against
+``stockout_value`` inline.
+"""
+
 from __future__ import annotations
 
 import json
@@ -80,6 +100,19 @@ def _time_features(day_index: int) -> np.ndarray:
     return np.stack([hour_sin, hour_cos, dow_sin, dow_cos], axis=0)
 
 
+def observed_from_stock(stock: np.ndarray, stockout_value: float) -> np.ndarray:
+    """Derive the observation indicator ``observed`` from the raw stock flag.
+
+    Beware the counter-intuitive polarity: ``stock_status == stockout_value``
+    (=1 for FreshRetailNet) marks a *stockout* hour, i.e. the sale is NOT
+    observable.  The returned array is therefore 1.0 for observed cells and
+    0.0 for stockout cells, and corresponds one-to-one to the paper's
+    observation mask ``m_{i,d,h}`` (m=1: observed, contributes to the loss;
+    m=0: stockout, excluded from the loss).
+    """
+    return (np.asarray(stock) != stockout_value).astype(np.float32)
+
+
 def _aggregate_duplicate_days(group: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
     if not group["dt"].duplicated().any():
         return group.sort_values("dt")
@@ -94,7 +127,8 @@ def _aggregate_duplicate_days(group: pd.DataFrame, cfg: dict[str, Any]) -> pd.Da
         stock = np.stack([_as_hours(v) for v in day_group[stock_col]], axis=0).astype(np.float32)
         row[sales_col] = sales.sum(axis=0).astype(float).tolist()
         # Aggregated demand is observable at an hour if at least one member series is observable.
-        row[stock_col] = np.where(np.any(stock != stockout_value, axis=0), 0.0, stockout_value).astype(float).tolist()
+        observed_any = observed_from_stock(stock, stockout_value).astype(bool).any(axis=0)
+        row[stock_col] = np.where(observed_any, 0.0, stockout_value).astype(float).tolist()
         for col in numeric_cols:
             if col in day_group:
                 row[col] = float(day_group[col].astype(np.float32).mean())
@@ -163,9 +197,11 @@ def frame_to_examples(
         masks = []
         sale = np.stack([_as_hours(v) for v in history_group[sales_col]], axis=0).astype(np.float32)
         stock = np.stack([_as_hours(v) for v in history_group[stock_col]], axis=0).astype(np.float32)
-        sale_obs = (stock != stockout_value).astype(np.float32)
+        observed = observed_from_stock(stock, stockout_value)
         channels.append(sale.reshape(-1))
-        masks.append(sale_obs.reshape(-1))
+        # Mask channel 0 (sales channel) is the paper's observation mask
+        # m_{i,d,h}; all remaining mask channels are constant 1.
+        masks.append(observed.reshape(-1))
         channels.append(stock.reshape(-1))
         masks.append(np.ones(history_days * 24, dtype=np.float32))
 

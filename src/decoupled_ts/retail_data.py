@@ -466,6 +466,8 @@ def _binary_effect_reproducibility(
 
 
 def _stockout_near_mask(observed: np.ndarray) -> np.ndarray:
+    # observed > 0 marks an observed cell (paper's m=1); observed <= 0 marks a
+    # stockout cell.  Same convention as decoupled_ts.data.observed_from_stock.
     stockout = observed <= 0
     near = stockout.copy()
     near[:, :, 1:] |= stockout[:, :, :-1]
