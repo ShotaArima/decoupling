@@ -324,7 +324,18 @@ def run_epoch(
 @torch.no_grad()
 def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, Any], device: torch.device) -> dict[str, np.ndarray]:
     model.eval()
-    parts = {"sales": [], "baseline": [], "baseline_log": [], "residual": [], "residual_hat": [], "observed": [], "future_cells": [], "grid": [], "subgroup": []}
+    parts = {
+        "sales": [],
+        "baseline": [],
+        "baseline_log": [],
+        "residual": [],
+        "residual_hat": [],
+        "observed": [],
+        "future_cells": [],
+        "grid": [],
+        "subgroup": [],
+        "static_ids": [],
+    }
     latents: dict[str, list[np.ndarray]] = {"z_global": [], "z_local": [], "z_day": [], "z_hour": [], "z_interaction": []}
     components: dict[str, list[np.ndarray]] = {
         "global_component": [],
@@ -351,6 +362,7 @@ def predict_residuals(model: nn.Module, loader: DataLoader, config: dict[str, An
         parts["residual_hat"].append(out["residual_hat"].detach().cpu().numpy())
         parts["grid"].append(flatten_to_grid(batch["x"]).numpy())
         parts["subgroup"].append(batch["subgroup"].numpy())
+        parts["static_ids"].append(batch["static_ids"].numpy())
         for key in latents:
             if key in out:
                 latents[key].append(out[key].detach().cpu().numpy())
@@ -1066,6 +1078,10 @@ def save_latent_outputs(arrays: dict[str, np.ndarray], out_dir: Path, output_cfg
         ):
             if key in arrays:
                 np.save(out_dir / f"{key}.npy", arrays[key])
+    if bool(output_cfg.get("save_component_analysis_arrays", False)):
+        for key in ("residual", "observed", "static_ids"):
+            if key in arrays:
+                np.save(out_dir / f"{key}.npy", arrays[key])
     if bool(output_cfg.get("save_hour_heatmap", True)) and "z_hour" in arrays:
         with (out_dir / "z_hour_heatmap.csv").open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -1224,7 +1240,11 @@ def run_variant(config: dict[str, Any], variant: dict[str, Any], bundle, device:
         "true_hour.npy",
         "true_interaction.npy",
         "true_residual.npy",
+        "noisy_true_residual.npy",
         "subgroup.npy",
+        "residual.npy",
+        "observed.npy",
+        "static_ids.npy",
         "z_hour_heatmap.csv",
         "residual_predictions.csv",
         "metrics.json",

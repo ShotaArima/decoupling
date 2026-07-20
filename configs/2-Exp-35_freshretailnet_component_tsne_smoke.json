@@ -1,0 +1,128 @@
+{
+  "seed": 17,
+  "sweep": {
+    "seeds": [17],
+    "output_dir": "runs/2-Exp-35_freshretailnet_component_tsne_smoke",
+    "scenarios": [
+      {
+        "name": "series_mean_all",
+        "overrides": {
+          "residual": {
+            "baseline_method": "series_mean"
+          }
+        }
+      }
+    ]
+  },
+  "dataset": {
+    "name": "freshretailnet",
+    "hf_name": "Dingdong-Inc/FreshRetailNet-50K",
+    "data_dir": "data/freshretailnet",
+    "train_split": "train",
+    "eval_split": "eval",
+    "sample_id_columns": ["store_id", "product_id"],
+    "static_id_columns": [
+      "city_id",
+      "store_id",
+      "management_group_id",
+      "first_category_id",
+      "second_category_id",
+      "third_category_id",
+      "product_id"
+    ],
+    "subgroup_target": "city_id",
+    "daily_numeric_columns": [
+      "discount",
+      "holiday_flag",
+      "activity_flag",
+      "precpt",
+      "avg_temperature",
+      "avg_humidity",
+      "avg_wind_level"
+    ],
+    "hourly_sales_column": "hours_sale",
+    "hourly_stock_column": "hours_stock_status",
+    "stockout_value": 1,
+    "history_days": 28,
+    "forecast_days": 2,
+    "recent_days": 7,
+    "window_size": 24,
+    "cache_dir": "data/freshretailnet/cache",
+    "use_cache": true,
+    "max_train_series": 300,
+    "max_eval_series": 100,
+    "validation_source": "train_holdout",
+    "max_valid_series": 300,
+    "subset_filter": {
+      "enabled": false
+    }
+  },
+  "model": {
+    "hidden_dim": 64,
+    "global_dim": 8,
+    "local_dim": 8,
+    "day_dim": 8,
+    "hour_dim": 8,
+    "interaction_dim": 6,
+    "dropout": 0.1
+  },
+  "loss": {
+    "decouple_weight": 0.01,
+    "component_constraint_weight": 0.0,
+    "residual_bias_weight": 0.0,
+    "series_residual_bias_weight": 0.0
+  },
+  "residual": {
+    "baseline_method": "series_mean",
+    "target": "baseline_residual"
+  },
+  "calibration": {
+    "enabled": false
+  },
+  "swap_regularization": {
+    "enabled": false,
+    "weight": 0.05
+  },
+  "output": {
+    "save_latent_arrays": true,
+    "save_component_analysis_arrays": true,
+    "save_residual_predictions": false,
+    "save_checkpoints": false,
+    "save_hour_heatmap": true,
+    "save_visualization_tables": false
+  },
+  "train": {
+    "batch_size": 64,
+    "epochs": 1,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "num_workers": 0,
+    "pin_memory": false,
+    "selection_metric": "valid_loss_residual_reconstruction",
+    "device": "cpu",
+    "output_dir": "runs/2-Exp-35_freshretailnet_component_tsne_smoke/base",
+    "amp": false,
+    "reset_seed_per_variant": true
+  },
+  "experiments": [
+    {
+      "name": "output_decomp_no_center",
+      "type": "output_decomposition",
+      "center_components": false,
+      "use_interaction": true
+    },
+    {
+      "name": "output_decomp_centered",
+      "type": "output_decomposition",
+      "center_components": true,
+      "use_interaction": true
+    }
+  ],
+  "diagnostics": {
+    "n_permutations": 0
+  },
+  "probes": {
+    "enabled": false
+  }
+}
