@@ -1,0 +1,13 @@
+{
+  "name": "semi-presen-slidev",
+  "private": true,
+  "scripts": {
+    "dev": "slidev slides.md --open",
+    "build": "slidev build slides.md",
+    "export": "slidev export slides.md --output ../M2中間発表_draft.pdf"
+  },
+  "devDependencies": {
+    "@slidev/cli": "^0.50.0",
+    "@slidev/theme-default": "^0.25.0"
+  }
+}
