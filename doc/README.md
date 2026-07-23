@@ -35,3 +35,4 @@
 | 2-Exp-26 | [2-Exp-26_global_local_to_four_factor_design.md](2-Exp-26_global_local_to_four_factor_design.md) | 元論文 `global/local` から 4 成分分割への橋渡し |
 | 2-Exp-27 | [2-Exp-27_direct_vs_residual_bridge.md](2-Exp-27_direct_vs_residual_bridge.md) | direct target と residual target の最小比較 |
 | 2-Exp-28 | [2-Exp-28_latent_vs_output_decomposition.md](2-Exp-28_latent_vs_output_decomposition.md) | latent split と 4変数への分解の直接比較 |
+| 2-Exp-35 | [2-Exp-35_freshretailnet_component_tsne.md](2-Exp-35_freshretailnet_component_tsne.md) | FreshRetailNet-50K の推定hour成分をt-SNEと定量指標で検証 |
