@@ -317,3 +317,128 @@ class OutputDecompositionResidualModel(nn.Module):
             "z_hour": encoded["z_hour"],
             "z_interaction": encoded["z_interaction"],
         }
+
+
+class UnifiedDecompositionResidualModel(nn.Module):
+    """Unified architecture: one shared cell-level backbone encoder with axis-pooling
+    readouts, and either axis-specific output heads (`shared_encoder`) or a single
+    context-conditioned cell decoder followed by an exact ANOVA projection
+    (`single_decoder`).
+
+    In `single_decoder` mode the four components are obtained by projecting the
+    decoded grid onto the orthogonal ANOVA subspaces (grand mean / row / column /
+    remainder), so centering holds by construction and `center_components` is
+    ignored.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        days: int,
+        hours: int,
+        hidden_dim: int,
+        global_dim: int,
+        day_dim: int,
+        hour_dim: int,
+        interaction_dim: int,
+        dropout: float = 0.1,
+        architecture: str = "single_decoder",
+        center_components: bool = True,
+    ):
+        super().__init__()
+        if architecture not in {"shared_encoder", "single_decoder"}:
+            raise ValueError(f"unknown unified architecture: {architecture}")
+        self.days = days
+        self.hours = hours
+        self.architecture = architecture
+        self.center_components = center_components
+        self.backbone = nn.Sequential(
+            nn.Linear(input_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+        )
+        self.global_proj = nn.Linear(hidden_dim, global_dim)
+        self.day_proj = nn.Linear(hidden_dim, day_dim)
+        self.hour_proj = nn.Linear(hidden_dim, hour_dim)
+        # interaction latent は cell-level 特徴からではなく z_day×z_hour からのみ構成する。
+        # cell-level 特徴を使うと、入力チャネル 0（観測残差）を interaction 経路が
+        # コピーして窓内で恒等写像に退化する（2-Exp-33 と同型のリーク）。
+        self.interaction_encoder = InteractionEncoder(day_dim, hour_dim, hidden_dim, interaction_dim)
+        if architecture == "shared_encoder":
+            def head(dim: int) -> nn.Sequential:
+                return nn.Sequential(nn.Linear(dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout), nn.Linear(hidden_dim, 1))
+
+            self.global_head = head(global_dim)
+            self.day_head = head(day_dim)
+            self.hour_head = head(hour_dim)
+            self.interaction_head = head(interaction_dim)
+        else:
+            dec_in = global_dim + day_dim + hour_dim + interaction_dim
+            self.decoder = nn.Sequential(
+                nn.Linear(dec_in, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, 1),
+            )
+
+    @staticmethod
+    def _masked_pool(feats: torch.Tensor, mask: torch.Tensor, dims: tuple[int, ...]) -> torch.Tensor:
+        weighted = feats * mask
+        denom = mask.sum(dim=dims).clamp_min(1.0)
+        return weighted.sum(dim=dims) / denom
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> dict[str, torch.Tensor]:
+        grid = flatten_to_grid(x)
+        mask_grid = flatten_to_grid(mask)
+        feats = self.backbone(torch.cat([grid, mask_grid], dim=-1))
+        cell_mask = mask_grid[..., :1]
+        z_global = self.global_proj(self._masked_pool(feats, cell_mask, (1, 2)))
+        z_day = self.day_proj(self._masked_pool(feats, cell_mask, (2,)))
+        z_hour = self.hour_proj(self._masked_pool(feats, cell_mask, (1,)))
+        z_interaction = self.interaction_encoder(z_day, z_hour)
+        batch = grid.shape[0]
+        if self.architecture == "shared_encoder":
+            global_component = self.global_head(z_global).reshape(batch, 1, 1).expand(batch, self.days, self.hours)
+            day_component = self.day_head(z_day).squeeze(-1)[:, :, None].expand(batch, self.days, self.hours)
+            hour_component = self.hour_head(z_hour).squeeze(-1)[:, None, :].expand(batch, self.days, self.hours)
+            interaction_component = self.interaction_head(z_interaction).squeeze(-1)
+            if self.center_components:
+                day_component = day_component - day_component.mean(dim=1, keepdim=True)
+                hour_component = hour_component - hour_component.mean(dim=2, keepdim=True)
+                interaction_component = interaction_component - interaction_component.mean(dim=1, keepdim=True)
+                interaction_component = interaction_component - interaction_component.mean(dim=2, keepdim=True)
+            residual_hat = global_component + day_component + hour_component + interaction_component
+        else:
+            dec_in = torch.cat(
+                [
+                    z_global[:, None, None, :].expand(batch, self.days, self.hours, -1),
+                    z_day[:, :, None, :].expand(batch, self.days, self.hours, -1),
+                    z_hour[:, None, :, :].expand(batch, self.days, self.hours, -1),
+                    z_interaction,
+                ],
+                dim=-1,
+            )
+            decoded = self.decoder(dec_in).squeeze(-1)
+            grand = decoded.mean(dim=(1, 2), keepdim=True)
+            row = decoded.mean(dim=2, keepdim=True) - grand
+            col = decoded.mean(dim=1, keepdim=True) - grand
+            global_component = grand.expand(batch, self.days, self.hours)
+            day_component = row.expand(batch, self.days, self.hours)
+            hour_component = col.expand(batch, self.days, self.hours)
+            interaction_component = decoded - grand - row - col
+            residual_hat = decoded
+        return {
+            "grid": grid,
+            "mask_grid": mask_grid,
+            "z_global": z_global,
+            "z_day": z_day,
+            "z_hour": z_hour,
+            "z_interaction": z_interaction,
+            "global_component": global_component,
+            "day_component": day_component,
+            "hour_component": hour_component,
+            "interaction_component": interaction_component,
+            "residual_hat": residual_hat,
+        }

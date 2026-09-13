@@ -16,7 +16,14 @@ from .data import load_config
 from .experiment_logging import append_jsonl, setup_run_logger, write_json
 from .metrics import regression_metrics
 from .residual_diagnostics import _labels_from_grid
-from .residual_models import EmpiricalAnovaResidualModel, OutputDecompositionResidualModel, ResidualFlattenAE, ResidualMultiGrainAE, residual_decouple_penalty
+from .residual_models import (
+    EmpiricalAnovaResidualModel,
+    OutputDecompositionResidualModel,
+    ResidualFlattenAE,
+    ResidualMultiGrainAE,
+    UnifiedDecompositionResidualModel,
+    residual_decouple_penalty,
+)
 from .retail_data import build_retail_data
 from .retail_models import flatten_to_grid
 from .train import autocast_context, make_loader, optimize_torch_runtime, resolve_device
@@ -184,6 +191,20 @@ def make_residual_model(config: dict[str, Any], variant: dict[str, Any], input_d
             dropout=float(model_cfg.get("dropout", 0.1)),
             center_components=bool(variant.get("center_components", True)),
             use_interaction=bool(variant.get("use_interaction", True)),
+        )
+    if variant["type"] == "unified_decomposition":
+        return UnifiedDecompositionResidualModel(
+            input_dim=input_dim,
+            days=days,
+            hours=hours,
+            hidden_dim=int(model_cfg["hidden_dim"]),
+            global_dim=int(model_cfg["global_dim"]),
+            day_dim=int(model_cfg["day_dim"]),
+            hour_dim=int(model_cfg["hour_dim"]),
+            interaction_dim=int(model_cfg["interaction_dim"]),
+            dropout=float(model_cfg.get("dropout", 0.1)),
+            architecture=str(variant.get("architecture", "single_decoder")),
+            center_components=bool(variant.get("center_components", True)),
         )
     raise ValueError(f"unknown residual variant type: {variant['type']}")
 
