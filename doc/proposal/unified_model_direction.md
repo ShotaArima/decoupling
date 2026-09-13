@@ -2,6 +2,7 @@
 
 作成日: 2026-08-22
 関連: [research_direction_2026-08.md](research_direction_2026-08.md)（特に2-2節）、[formulation.md](formulation.md)、[risks.md](risks.md)、[related_work_and_improvement.md](related_work_and_improvement.md)
+続編: [direct_y_and_unified_encoder_decoder.md](direct_y_and_unified_encoder_decoder.md)（2026-08-22。元論文ベースで直接 y 予測と 1Enc/1Dec 化を検討し、考慮点 C1〜C9 と仮説・検証ラダー 2-Exp-41〜46 を整理）
 
 このメモは、現行の「3 Encoder + interaction MLP + 4 Decoder + 中心化制約」構成から、
 「1 Encoder + 1 Decoder + 損失関数／構造による分解」へ進化させる方向性を、
