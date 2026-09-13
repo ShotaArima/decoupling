@@ -85,6 +85,10 @@ def residual_batch(batch: dict[str, torch.Tensor], config: dict[str, Any]) -> di
         residual = batch[target].to(sales.device)
         baseline = sales - residual
         extra: dict[str, torch.Tensor] = {}
+    elif method == "zero":
+        baseline = torch.zeros_like(sales)
+        residual = sales
+        extra = {}
     elif method == "series_mean":
         baseline = _series_mean_torch(sales, baseline_observed)
         residual = sales - baseline
@@ -114,7 +118,7 @@ def residual_batch(batch: dict[str, torch.Tensor], config: dict[str, Any]) -> di
     else:
         raise ValueError(
             "residual experiments support baseline_method in "
-            "{'series_mean', 'log1p_series_mean', 'weekday_same_hour_mean', 'same_hour_recent_mean', 'log1p_same_hour_recent_mean'}"
+            "{'zero', 'series_mean', 'log1p_series_mean', 'weekday_same_hour_mean', 'same_hour_recent_mean', 'log1p_same_hour_recent_mean'}"
         )
     x_residual = batch["x"].clone()
     x_residual[:, 0, :] = residual.reshape(residual.shape[0], -1)
